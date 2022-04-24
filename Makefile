@@ -1,16 +1,20 @@
-.PHONY: rebuild initialize clean
+.PHONY: build initialize test clean
 
-all: rebuild
-rebuild:
+all: build
+build:
 	rm -rf .env
 	$(MAKE) initialize
-initialize: SHELL:=/bin/bash
 initialize:
-	set -e ; \
+	set -e; \
 	${PYO3_PYTHON} -m venv .env; \
-	source .env/bin/activate; \
-	${PYO3_PIP} install maturin; \
+	. .env/bin/activate; \
+	.env/bin/python -m pip install maturin; \
 	maturin develop
+test: build
+	set -e; \
+	. .env/bin/activate; \
+	cd tests; \
+	../.env/bin/python -m unittest
 clean:
 	cargo clean
 	rm -rf .env
