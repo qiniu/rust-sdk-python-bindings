@@ -1,2 +1,2 @@
 # rust-sdk-python-bindings
-Qeneric Qiniu Resource Storage SDK
+Generic Qiniu Resource Storage SDK
