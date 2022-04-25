@@ -1,4 +1,4 @@
-from qiniu_sdk_python_bindings import etag_of, etag_with_parts, async_etag_of, async_etag_with_parts
+from qiniu_sdk_python_bindings import etag_of, etag_with_parts, async_etag_of, async_etag_with_parts, EtagV1, EtagV2, Etag, EtagVersion
 import unittest
 import aiofiles
 import asyncio
@@ -45,6 +45,17 @@ class TestEtag(unittest.TestCase):
             etag_with_parts(stream, [1 << 22, 1 << 22, 1 << 20]),
             'ljgVjMtyMsOgIySv79U8Qz4TrUO4'
         )
+class TestEtagV1(unittest.TestCase):
+    def test_large_size_etag_v1(self):
+        for etag in [EtagV1(), Etag(EtagVersion.V1)]:
+            etag.write(_data_of_size(5 * (1 << 20)))
+            self.assertEqual(etag.finalize(), 'lg-Eb5KFCuZn-cUfj_oS2PPOU9xy')
+class TestEtagV2(unittest.TestCase):
+    def test_large_size_etag_v2(self):
+        for etag in [EtagV2(), Etag(EtagVersion.V2)]:
+            etag.write(_data_of_size(1 << 19))
+            etag.write(_data_of_size(1 << 23))
+            self.assertEqual(etag.finalize(), 'nt82yvMNHlNgZ4H8_A_4de84mr2f')
 class TestAsyncEtag(unittest.IsolatedAsyncioTestCase):
     async def test_empty_etag_of(self):
         async with aiofiles.tempfile.TemporaryFile('wb+') as f:
