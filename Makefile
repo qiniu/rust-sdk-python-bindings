@@ -4,7 +4,7 @@ all: build
 build:
 	set -e; \
 	. .env/bin/activate; \
-	.env/bin/python -m pip uninstall -y rust-sdk-python-bindings; \
+	.env/bin/python -m pip uninstall -y qiniu-sdk-python-bindings; \
 	maturin develop
 initialize:
 	set -e; \

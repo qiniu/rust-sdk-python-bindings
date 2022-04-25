@@ -1,5 +1,5 @@
 [package]
-name = "rust-sdk-python-bindings"
+name = "qiniu-sdk-python-bindings"
 version = "0.1.1"
 authors = ["Rong Zhou <zhourong@qiniu.com>", "Shanghai Qiniu Information Technologies Co., Ltd."]
 edition = "2021"
