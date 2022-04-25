@@ -1,0 +1,36 @@
+on: [push, pull_request]
+name: Run Test Cases
+jobs:
+  linux:
+    name: CI Test On Linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - 1.60.0
+        python:
+          - '3.7'
+          - '3.8'
+          - '3.9'
+          - '3.10'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+      - name: Install Rust stable
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          default: true
+          override: true
+      - name: Install Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: x64
+      - name: Test
+        run: |
+          export PYO3_PYTHON="$(which python)"
+          make initialize test
