@@ -10,7 +10,7 @@ initialize:
 	set -e; \
 	${PYO3_PYTHON} -m venv .env; \
 	. .env/bin/activate; \
-	.env/bin/python -m pip install -r requirement.txt; \
+	.env/bin/python -m pip install .; \
 	maturin develop
 test:
 	set -e; \
