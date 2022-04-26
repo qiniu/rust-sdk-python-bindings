@@ -78,8 +78,8 @@ class TestCredentialProvider(unittest.TestCase):
         credential.GlobalCredentialProvider.clear()
         credential.EnvCredentialProvider.clear()
         c = credential.Credential('ak_static', 'sk_static')
-        cc = credential.ChainCredentialsProvider([credential.GlobalCredentialProvider(
-        ), credential.EnvCredentialProvider(), credential.StaticCredentialProvider(c)])
+        cc = credential.ChainCredentialsProvider(
+            [credential.GlobalCredentialProvider(), credential.EnvCredentialProvider(), c])
         self.assertEqual(cc.get().access_key(), 'ak_static')
         self.assertEqual(cc.get().secret_key(), 'sk_static')
         credential.EnvCredentialProvider.setup(

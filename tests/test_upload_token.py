@@ -164,8 +164,7 @@ class TestUploadPolicy(unittest.TestCase):
 
 class TestUploadTokenProvider(unittest.TestCase):
     def test_static_upload_token_provider(self):
-        cred = credential.StaticCredentialProvider(
-            credential.Credential('test-ak', 'test-sk'))
+        cred = credential.Credential('test-ak', 'test-sk')
         provider = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600).build().to_upload_token_provider(cred)
         token = provider.to_token_string()
@@ -176,8 +175,7 @@ class TestUploadTokenProvider(unittest.TestCase):
         self.assertEqual(provider.policy().key(), 'test-object')
 
     def test_bucket_upload_token_provider(self):
-        cred = credential.StaticCredentialProvider(
-            credential.Credential('test-ak', 'test-sk'))
+        cred = credential.Credential('test-ak', 'test-sk')
         provider = upload_token.BucketUploadTokenProvider(
             'test-bucket', 3600, cred)
         self.assertTrue(provider.to_token_string().startswith('test-ak:'))
@@ -198,8 +196,7 @@ class TestUploadTokenProvider(unittest.TestCase):
         self.assertTrue(provider.to_token_string().startswith('test-ak:'))
 
     def test_object_upload_token_provider(self):
-        cred = credential.StaticCredentialProvider(
-            credential.Credential('test-ak', 'test-sk'))
+        cred = credential.Credential('test-ak', 'test-sk')
         provider = upload_token.ObjectUploadTokenProvider(
             'test-bucket', 'test-object', 3600, cred)
         self.assertTrue(provider.to_token_string().startswith('test-ak:'))
