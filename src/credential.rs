@@ -9,6 +9,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<CredentialProvider>()?;
     m.add_class::<GlobalCredentialProvider>()?;
     m.add_class::<EnvCredentialProvider>()?;
+    m.add_class::<StaticCredentialProvider>()?;
+    m.add_class::<ChainCredentialsProvider>()?;
     m.add_class::<GetOptions>()?;
     Ok(m)
 }
@@ -311,6 +313,50 @@ impl EnvCredentialProvider {
     #[pyo3(text_signature = "(credential)")]
     fn setup(credential: &Credential) {
         qiniu_sdk::credential::EnvCredentialProvider::setup(&credential.0);
+    }
+
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn clear() {
+        qiniu_sdk::credential::EnvCredentialProvider::clear();
+    }
+}
+
+#[pyclass(extends = CredentialProvider)]
+#[derive(Debug, Copy, Clone, Default)]
+struct StaticCredentialProvider;
+
+#[pymethods]
+impl StaticCredentialProvider {
+    #[new]
+    fn new(cred: Credential) -> (Self, CredentialProvider) {
+        (Self, CredentialProvider(Box::new(cred.0)))
+    }
+}
+
+#[pyclass(extends = CredentialProvider)]
+#[derive(Debug, Copy, Clone, Default)]
+struct ChainCredentialsProvider;
+
+#[pymethods]
+impl ChainCredentialsProvider {
+    #[new]
+    fn new(creds: Vec<CredentialProvider>) -> PyResult<(Self, CredentialProvider)> {
+        let mut builder: Option<qiniu_sdk::credential::ChainCredentialsProviderBuilder> = None;
+        for cred in creds {
+            if let Some(builder) = &mut builder {
+                builder.append_credential(cred.0);
+            } else {
+                builder = Some(qiniu_sdk::credential::ChainCredentialsProvider::builder(
+                    cred.0,
+                ));
+            }
+        }
+        if let Some(builder) = &mut builder {
+            Ok((Self, CredentialProvider(Box::new(builder.build()))))
+        } else {
+            Err(PyValueError::new_err("creds is empty"))
+        }
     }
 }
 
