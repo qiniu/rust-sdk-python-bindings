@@ -4,7 +4,7 @@ all: build
 build:
 	set -e; \
 	. .env/bin/activate; \
-	.env/bin/python -m pip uninstall -y qiniu-sdk-python-bindings; \
+	.env/bin/python -m pip uninstall -y qiniu-sdk-python-bindings || true; \
 	maturin develop
 initialize:
 	set -e; \
@@ -12,7 +12,7 @@ initialize:
 	. .env/bin/activate; \
 	.env/bin/python -m pip install -r requirement.txt; \
 	maturin develop
-test: build
+test:
 	set -e; \
 	. .env/bin/activate; \
 	cd tests; \

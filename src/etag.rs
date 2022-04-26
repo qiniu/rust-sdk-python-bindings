@@ -29,21 +29,20 @@ macro_rules! define_etag_struct {
                 self.__repr__()
             }
 
-            fn write(&mut self, data: Vec<u8>) -> PyResult<usize> {
+            fn write(&mut self, data: Vec<u8>) -> usize {
                 self.0.update(&data);
-                Ok(data.len())
+                data.len()
             }
 
-            fn reset(&mut self) -> PyResult<()> {
+            fn reset(&mut self) {
                 self.0.reset();
-                Ok(())
             }
 
-            fn finalize(&mut self) -> PyResult<String> {
+            fn finalize(&mut self) -> String {
                 let mut buf =
                     GenericArray::<u8, <$rust_struct as FixedOutput>::OutputSize>::default();
                 self.0.finalize_into_reset(&mut buf);
-                Ok(String::from_utf8(buf.to_vec()).unwrap())
+                String::from_utf8(buf.to_vec()).unwrap()
             }
         }
     };
