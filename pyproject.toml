@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "License :: OSI Approved :: MIT License",
 ]
-
-[dependencies]
-aiofiles = "^0.8.0"
+dependencies = [
+    "maturin>=0.12,<0.13",
+    "aiofiles>=0.8.0,<0.9.0"
+]
