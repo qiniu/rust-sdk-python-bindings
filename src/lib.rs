@@ -8,8 +8,8 @@ use pyo3::prelude::*;
 #[pyo3(name = "qiniu_sdk_python_bindings")]
 fn qiniu_sdk_python_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     pyo3_log::try_init().ok();
-    etag::register(py, m)?;
-    credential::register(py, m)?;
+    m.add_submodule(etag::create_module(py)?)?;
+    m.add_submodule(credential::create_module(py)?)?;
 
     Ok(())
 }

@@ -17,7 +17,7 @@ test:
 	. .env/bin/activate; \
 	cd tests; \
 	../.env/bin/python -m unittest -v
-console: build
+console:
 	set -e; \
 	. .env/bin/activate; \
 	.env/bin/python

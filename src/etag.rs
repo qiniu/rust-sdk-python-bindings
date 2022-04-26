@@ -1,8 +1,10 @@
 use super::utils::PythonIoBase;
 use pyo3::prelude::*;
-use qiniu_sdk::etag::{FixedOutput, GenericArray, Reset, Update};
+use qiniu_sdk::etag::{FixedOutput, GenericArray, Reset, Update, ETAG_SIZE};
 
-pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+pub(super) fn create_module<'p>(py: Python<'p>) -> PyResult<&'p PyModule> {
+    let m = PyModule::new(py, "etag")?;
+    m.add("ETAG_SIZE", ETAG_SIZE)?;
     m.add_class::<EtagV1>()?;
     m.add_class::<EtagV2>()?;
     m.add_class::<Etag>()?;
@@ -11,7 +13,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(etag_with_parts, m)?)?;
     m.add_function(wrap_pyfunction!(async_etag_of, m)?)?;
     m.add_function(wrap_pyfunction!(async_etag_with_parts, m)?)?;
-    Ok(())
+    Ok(m)
 }
 
 macro_rules! define_etag_struct {
