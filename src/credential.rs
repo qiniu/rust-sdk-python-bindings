@@ -1,11 +1,7 @@
-use std::time::Duration;
-
 use super::utils::PythonIoBase;
-use pyo3::{
-    exceptions::{PyIOError, PyValueError},
-    prelude::*,
-};
-use qiniu_sdk::credential::Uri;
+use pyo3::{exceptions::PyValueError, prelude::*};
+use qiniu_sdk::credential::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
+use std::{collections::HashMap, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "credential")?;
@@ -55,24 +51,23 @@ impl Credential {
 
     #[pyo3(text_signature = "($self, io_base)")]
     fn sign_reader(&self, io_base: PyObject) -> PyResult<String> {
-        self.0
-            .sign_reader(&mut PythonIoBase::new(io_base))
-            .map_err(PyIOError::new_err)
+        let signature = self.0.sign_reader(&mut PythonIoBase::new(io_base))?;
+        Ok(signature)
     }
 
     #[pyo3(text_signature = "($self, io_base)")]
     fn sign_async_reader<'p>(&self, io_base: PyObject, py: Python<'p>) -> PyResult<&'p PyAny> {
         let credential = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
-            credential
+            let signature = credential
                 .sign_async_reader(&mut PythonIoBase::new(io_base).into_async_read())
-                .await
-                .map_err(PyIOError::new_err)
+                .await?;
+            Ok(signature)
         })
     }
 
     #[pyo3(text_signature = "($self, url, secs)")]
-    fn sign_download_url(&self, url: String, secs: u64) -> PyResult<String> {
+    fn sign_download_url(&self, url: &str, secs: u64) -> PyResult<String> {
         let url = url
             .parse::<Uri>()
             .map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -80,6 +75,164 @@ impl Credential {
             .0
             .sign_download_url(url, Duration::from_secs(secs))
             .to_string())
+    }
+
+    #[pyo3(text_signature = "($self, url, content_type, body)")]
+    fn authorization_v1_for_request(
+        &self,
+        url: &str,
+        content_type: Option<&str>,
+        body: &[u8],
+    ) -> PyResult<String> {
+        let url = Self::parse_uri(url)?;
+        let content_type = Self::parse_header_value(content_type)?;
+        Ok(self
+            .0
+            .authorization_v1_for_request(&url, content_type.as_ref(), body))
+    }
+
+    #[pyo3(text_signature = "($self, url, content_type, body)")]
+    fn authorization_v1_for_request_with_body_reader(
+        &self,
+        url: &str,
+        content_type: Option<&str>,
+        body: PyObject,
+    ) -> PyResult<String> {
+        let url = Self::parse_uri(url)?;
+        let content_type = Self::parse_header_value(content_type)?;
+        let auth = self.0.authorization_v1_for_request_with_body_reader(
+            &url,
+            content_type.as_ref(),
+            &mut PythonIoBase::new(body),
+        )?;
+        Ok(auth)
+    }
+
+    #[pyo3(text_signature = "($self, url, content_type, body)")]
+    fn authorization_v1_for_request_with_async_body_reader<'p>(
+        &self,
+        url: &str,
+        content_type: Option<&str>,
+        body: PyObject,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let url = Self::parse_uri(url)?;
+        let content_type = Self::parse_header_value(content_type)?;
+        let credential = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let auth = credential
+                .authorization_v1_for_request_with_async_body_reader(
+                    &url,
+                    content_type.as_ref(),
+                    &mut PythonIoBase::new(body).into_async_read(),
+                )
+                .await?;
+            Ok(auth)
+        })
+    }
+
+    #[pyo3(text_signature = "($self, method, url, headers, body)")]
+    fn authorization_v2_for_request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: HashMap<String, String>,
+        body: &[u8],
+    ) -> PyResult<String> {
+        let method = Self::parse_method(method)?;
+        let url = Self::parse_uri(url)?;
+        let headers = Self::parse_headers(headers)?;
+        Ok(self
+            .0
+            .authorization_v2_for_request(&method, &url, &headers, body))
+    }
+
+    #[pyo3(text_signature = "($self, method, url, headers, body)")]
+    fn authorization_v2_for_request_with_body_reader(
+        &self,
+        method: &str,
+        url: &str,
+        headers: HashMap<String, String>,
+        body: PyObject,
+    ) -> PyResult<String> {
+        let method = Self::parse_method(method)?;
+        let url = Self::parse_uri(url)?;
+        let headers = Self::parse_headers(headers)?;
+        let auth = self.0.authorization_v2_for_request_with_body_reader(
+            &method,
+            &url,
+            &headers,
+            &mut PythonIoBase::new(body),
+        )?;
+        Ok(auth)
+    }
+
+    #[pyo3(text_signature = "($self, method, url, headers, body)")]
+    fn authorization_v2_for_request_with_async_body_reader<'p>(
+        &self,
+        method: &str,
+        url: &str,
+        headers: HashMap<String, String>,
+        body: PyObject,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let method = Self::parse_method(method)?;
+        let url = Self::parse_uri(url)?;
+        let headers = Self::parse_headers(headers)?;
+        let credential = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let auth = credential
+                .authorization_v2_for_request_with_async_body_reader(
+                    &method,
+                    &url,
+                    &headers,
+                    &mut PythonIoBase::new(body).into_async_read(),
+                )
+                .await?;
+            Ok(auth)
+        })
+    }
+}
+
+impl Credential {
+    fn parse_uri(url: &str) -> PyResult<Uri> {
+        let url = url
+            .parse::<Uri>()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(url)
+    }
+
+    fn parse_method(method: &str) -> PyResult<Method> {
+        let method = method
+            .parse::<Method>()
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(method)
+    }
+
+    fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
+        headers
+            .into_iter()
+            .map(|(name, value)| {
+                let name = name
+                    .parse::<HeaderName>()
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                let value = value
+                    .parse::<HeaderValue>()
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                Ok((name, value))
+            })
+            .collect()
+    }
+
+    fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
+        if let Some(header_value) = header_value {
+            let header_value = header_value
+                .parse::<HeaderValue>()
+                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            Ok(Some(header_value))
+        } else {
+            Ok(None)
+        }
     }
 }
 

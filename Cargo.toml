@@ -17,9 +17,10 @@ name = "qiniu_sdk_python_bindings"
 crate-type = ["cdylib"]
 
 [dependencies]
+mime = "0.3.16"
+smart-default = "0.6.0"
 pyo3 = { version = "0.16.4", features = ["abi3-py38", "extension-module", "multiple-pymethods"] }
 pyo3-log = "0.6.0"
 pyo3-asyncio = { version = "0.16.0", features = ["async-std-runtime"] }
 qiniu-sdk = { version = "0.1.1", path = "rust-sdk/sdk", features = ["etag", "credential", "async"] }
 futures = "0.3.21"
-smart-default = "0.6.0"

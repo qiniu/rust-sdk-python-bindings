@@ -10,6 +10,7 @@ initialize:
 	set -e; \
 	${PYO3_PYTHON} -m venv .env; \
 	. .env/bin/activate; \
+	.env/bin/python -m pip install pip --upgrade; \
 	.env/bin/python -m pip install .; \
 	maturin develop
 test:
