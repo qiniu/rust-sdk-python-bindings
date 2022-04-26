@@ -23,9 +23,15 @@ class TestCredentialProvider(unittest.TestCase):
     def test_global_credential(self):
         c = get_credential()
         credential.GlobalCredentialProvider.setup(c)
-        global_credential = credential.GlobalCredentialProvider().get()
-        self.assertEqual(global_credential.access_key(), ACCESS_KEY)
-        self.assertEqual(global_credential.secret_key(), SECRET_KEY)
+        gc = credential.GlobalCredentialProvider().get()
+        self.assertEqual(gc.access_key(), ACCESS_KEY)
+        self.assertEqual(gc.secret_key(), SECRET_KEY)
+    def test_env_credential(self):
+        c = get_credential()
+        credential.EnvCredentialProvider.setup(c)
+        ec = credential.EnvCredentialProvider().get()
+        self.assertEqual(ec.access_key(), ACCESS_KEY)
+        self.assertEqual(ec.secret_key(), SECRET_KEY)
 class TestAsyncEtag(unittest.IsolatedAsyncioTestCase):
     async def test_credential_sign_reader(self):
         c = get_credential()

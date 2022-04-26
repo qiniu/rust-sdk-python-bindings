@@ -7,11 +7,12 @@ use pyo3::{
 };
 use qiniu_sdk::credential::Uri;
 
-pub(super) fn create_module<'p>(py: Python<'p>) -> PyResult<&'p PyModule> {
+pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "credential")?;
     m.add_class::<Credential>()?;
     m.add_class::<CredentialProvider>()?;
     m.add_class::<GlobalCredentialProvider>()?;
+    m.add_class::<EnvCredentialProvider>()?;
     m.add_class::<GetOptions>()?;
     Ok(m)
 }
@@ -136,6 +137,27 @@ impl GlobalCredentialProvider {
     #[pyo3(text_signature = "()")]
     fn clear() {
         qiniu_sdk::credential::GlobalCredentialProvider::clear();
+    }
+}
+
+#[pyclass(extends = CredentialProvider)]
+#[derive(Debug, Copy, Clone, Default)]
+struct EnvCredentialProvider;
+
+#[pymethods]
+impl EnvCredentialProvider {
+    #[new]
+    fn new() -> (Self, CredentialProvider) {
+        (
+            Self,
+            CredentialProvider(Box::new(qiniu_sdk::credential::EnvCredentialProvider)),
+        )
+    }
+
+    #[staticmethod]
+    #[pyo3(text_signature = "(credential)")]
+    fn setup(credential: &Credential) {
+        qiniu_sdk::credential::EnvCredentialProvider::setup(&credential.0);
     }
 }
 

@@ -2,7 +2,7 @@ use super::utils::PythonIoBase;
 use pyo3::prelude::*;
 use qiniu_sdk::etag::{FixedOutput, GenericArray, Reset, Update, ETAG_SIZE};
 
-pub(super) fn create_module<'p>(py: Python<'p>) -> PyResult<&'p PyModule> {
+pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "etag")?;
     m.add("ETAG_SIZE", ETAG_SIZE)?;
     m.add_class::<EtagV1>()?;
@@ -31,15 +31,18 @@ macro_rules! define_etag_struct {
                 self.__repr__()
             }
 
+            #[pyo3(text_signature = "($self, data)")]
             fn write(&mut self, data: Vec<u8>) -> usize {
                 self.0.update(&data);
                 data.len()
             }
 
+            #[pyo3(text_signature = "($self)")]
             fn reset(&mut self) {
                 self.0.reset();
             }
 
+            #[pyo3(text_signature = "($self)")]
             fn finalize(&mut self) -> String {
                 let mut buf =
                     GenericArray::<u8, <$rust_struct as FixedOutput>::OutputSize>::default();
@@ -97,18 +100,21 @@ impl From<EtagVersion> for qiniu_sdk::etag::EtagVersion {
 }
 
 #[pyfunction]
+#[pyo3(text_signature = "(io_base)")]
 fn etag_of(io_base: PyObject) -> PyResult<String> {
     let etag = qiniu_sdk::etag::etag_of(PythonIoBase::new(io_base))?;
     Ok(etag)
 }
 
 #[pyfunction]
+#[pyo3(text_signature = "(io_base, parts)")]
 fn etag_with_parts(io_base: PyObject, parts: Vec<usize>) -> PyResult<String> {
     let etag = qiniu_sdk::etag::etag_with_parts(PythonIoBase::new(io_base), &parts)?;
     Ok(etag)
 }
 
 #[pyfunction]
+#[pyo3(text_signature = "(io_base)")]
 fn async_etag_of(io_base: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::async_std::future_into_py(py, async move {
         let etag =
@@ -118,6 +124,7 @@ fn async_etag_of(io_base: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
 }
 
 #[pyfunction]
+#[pyo3(text_signature = "(io_base, parts)")]
 fn async_etag_with_parts(io_base: PyObject, parts: Vec<usize>, py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::async_std::future_into_py(py, async move {
         let etag = qiniu_sdk::etag::async_etag_with_parts(
