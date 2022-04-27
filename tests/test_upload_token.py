@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import upload_token
+from qiniu_sdk_bindings import upload_token, credential
 import unittest
 
 
@@ -141,22 +141,84 @@ class TestUploadPolicy(unittest.TestCase):
             'test-bucket', 'test-object', 3600)
         builder.file_size_limitation(None, 5)
         policy = builder.build()
-        self.assertEqual(policy.minimal_file_size(), None)
-        self.assertEqual(policy.maximal_file_size(), 5)
+        self.assertEqual(policy.minimum_file_size(), None)
+        self.assertEqual(policy.maximum_file_size(), 5)
 
         builder = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600)
         builder.file_size_limitation(5)
         policy = builder.build()
-        self.assertEqual(policy.minimal_file_size(), 5)
-        self.assertEqual(policy.maximal_file_size(), None)
+        self.assertEqual(policy.minimum_file_size(), 5)
+        self.assertEqual(policy.maximum_file_size(), None)
 
         policy = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600, fsizeMin=5).build()
-        self.assertEqual(policy.minimal_file_size(), 5)
-        self.assertEqual(policy.maximal_file_size(), None)
+        self.assertEqual(policy.minimum_file_size(), 5)
+        self.assertEqual(policy.maximum_file_size(), None)
 
         policy = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600, fsizeLimit=5).build()
-        self.assertEqual(policy.minimal_file_size(), None)
-        self.assertEqual(policy.maximal_file_size(), 5)
+        self.assertEqual(policy.minimum_file_size(), None)
+        self.assertEqual(policy.maximum_file_size(), 5)
+
+
+class TestUploadTokenProvider(unittest.TestCase):
+    def test_static_upload_token_provider(self):
+        cred = credential.StaticCredentialProvider(
+            credential.Credential('test-ak', 'test-sk'))
+        provider = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600).build().to_upload_token_provider(cred)
+        token = provider.to_token_string()
+        self.assertTrue(token.startswith('test-ak:'))
+        provider = upload_token.StaticUploadTokenProvider(token)
+        self.assertEqual(provider.access_key(), 'test-ak')
+        self.assertEqual(provider.bucket_name(), 'test-bucket')
+        self.assertEqual(provider.policy().key(), 'test-object')
+
+    def test_bucket_upload_token_provider(self):
+        cred = credential.StaticCredentialProvider(
+            credential.Credential('test-ak', 'test-sk'))
+        provider = upload_token.BucketUploadTokenProvider(
+            'test-bucket', 3600, cred)
+        self.assertTrue(provider.to_token_string().startswith('test-ak:'))
+        self.assertEqual(provider.bucket_name(), 'test-bucket')
+        self.assertEqual(provider.policy().key(), None)
+
+        def on_policy_generated(builder):
+            builder.insert_only()
+            builder.enable_mime_detection()
+            builder.return_url('http://abc.com')
+            return builder
+
+        provider = upload_token.BucketUploadTokenProvider(
+            'test-bucket', 3600, cred, on_policy_generated=on_policy_generated)
+        self.assertTrue(provider.policy().is_insert_only())
+        self.assertTrue(provider.policy().mime_detection_enabled())
+        self.assertEqual(provider.policy().return_url(), 'http://abc.com')
+        self.assertTrue(provider.to_token_string().startswith('test-ak:'))
+
+    def test_object_upload_token_provider(self):
+        cred = credential.StaticCredentialProvider(
+            credential.Credential('test-ak', 'test-sk'))
+        provider = upload_token.ObjectUploadTokenProvider(
+            'test-bucket', 'test-object', 3600, cred)
+        self.assertTrue(provider.to_token_string().startswith('test-ak:'))
+        self.assertEqual(provider.bucket_name(), 'test-bucket')
+        self.assertEqual(provider.policy().key(), 'test-object')
+
+        def on_policy_generated(builder):
+            builder.insert_only()
+            builder.enable_mime_detection()
+            builder.return_url('http://abc.com')
+            return builder
+
+        provider = upload_token.ObjectUploadTokenProvider(
+            'test-bucket', 'test-object', 3600, cred, on_policy_generated=on_policy_generated)
+        self.assertTrue(provider.policy().is_insert_only())
+        self.assertTrue(provider.policy().mime_detection_enabled())
+        self.assertEqual(provider.policy().return_url(), 'http://abc.com')
+        self.assertTrue(provider.to_token_string().startswith('test-ak:'))
+
+
+if __name__ == '__main__':
+    unittest.main()

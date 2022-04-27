@@ -1,19 +1,35 @@
+use super::{credential::CredentialProvider, QiniuCallbackError, QiniuUnknownError};
 use pyo3::{
-    exceptions::PyValueError,
+    exceptions::{PyIOError, PyValueError},
     prelude::*,
-    types::{PyDict, PyString},
+    types::{PyDict, PyString, PyTuple},
 };
-use qiniu_sdk::upload_token::FileType;
-use std::time::{Duration, SystemTime};
+use qiniu_sdk::{
+    prelude::UploadTokenProviderExt,
+    upload_token::{FileType, ParseError, ToStringError},
+};
+use std::{
+    mem::take,
+    time::{Duration, SystemTime},
+};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload_token")?;
     m.add_class::<UploadPolicy>()?;
     m.add_class::<UploadPolicyBuilder>()?;
+    m.add_class::<UploadTokenProvider>()?;
+    m.add_class::<GetAccessKeyOptions>()?;
+    m.add_class::<GetPolicyOptions>()?;
+    m.add_class::<ToStringOptions>()?;
+    m.add_class::<StaticUploadTokenProvider>()?;
+    m.add_class::<FromUploadPolicy>()?;
+    m.add_class::<BucketUploadTokenProvider>()?;
+    m.add_class::<ObjectUploadTokenProvider>()?;
     Ok(m)
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct UploadPolicy(qiniu_sdk::upload_token::UploadPolicy);
 
 #[pymethods]
@@ -199,6 +215,15 @@ impl UploadPolicy {
             .collect()
     }
 
+    #[pyo3(text_signature = "($self)")]
+    fn to_upload_token_provider(&self, credential: CredentialProvider) -> UploadTokenProvider {
+        UploadTokenProvider(Box::new(
+            self.to_owned()
+                .0
+                .into_dynamic_upload_token_provider(credential.into_inner()),
+        ))
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
@@ -256,6 +281,7 @@ fn convert_json_value_to_py_object(
 }
 
 #[pyclass]
+#[derive(Clone)]
 struct UploadPolicyBuilder(qiniu_sdk::upload_token::UploadPolicyBuilder);
 
 #[pymethods]
@@ -403,6 +429,20 @@ impl UploadPolicyBuilder {
     fn object_lifetime(&mut self, lifetime: u64) {
         self.0.object_lifetime(Duration::from_secs(lifetime));
     }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl ToPyObject for UploadPolicyBuilder {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        self.to_owned().into_py(py)
+    }
 }
 
 impl UploadPolicyBuilder {
@@ -419,5 +459,342 @@ impl UploadPolicyBuilder {
             }
         }
         Ok(())
+    }
+}
+
+#[pyclass(subclass)]
+#[derive(Clone)]
+struct UploadTokenProvider(Box<dyn qiniu_sdk::upload_token::UploadTokenProvider>);
+
+#[pymethods]
+impl UploadTokenProvider {
+    #[args(opts = "GetAccessKeyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn access_key(&self, opts: GetAccessKeyOptions) -> PyResult<String> {
+        Ok(self
+            .0
+            .access_key(opts.0)
+            .map_err(convert_parse_error_to_py_err)?
+            .into_access_key()
+            .to_string())
+    }
+
+    #[args(opts = "GetPolicyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn policy(&self, opts: GetPolicyOptions) -> PyResult<UploadPolicy> {
+        Ok(UploadPolicy(
+            self.0
+                .policy(opts.0)
+                .map_err(convert_parse_error_to_py_err)?
+                .into_upload_policy(),
+        ))
+    }
+
+    #[args(opts = "ToStringOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn to_token_string(&self, opts: ToStringOptions) -> PyResult<String> {
+        Ok(self
+            .0
+            .to_token_string(opts.0)
+            .map_err(convert_to_string_error_to_py_err)?
+            .into_owned())
+    }
+
+    #[args(opts = "GetPolicyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn bucket_name(&self, opts: GetPolicyOptions) -> PyResult<String> {
+        Ok(self
+            .0
+            .bucket_name(opts.0)
+            .map_err(convert_parse_error_to_py_err)?
+            .to_string())
+    }
+
+    #[args(opts = "GetAccessKeyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn async_access_key<'p>(
+        &self,
+        opts: GetAccessKeyOptions,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let provider = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            Ok(provider
+                .async_access_key(opts.0)
+                .await
+                .map_err(convert_parse_error_to_py_err)?
+                .into_access_key()
+                .to_string())
+        })
+    }
+
+    #[args(opts = "GetPolicyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn async_policy<'p>(&self, opts: GetPolicyOptions, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let provider = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            Ok(UploadPolicy(
+                provider
+                    .async_policy(opts.0)
+                    .await
+                    .map_err(convert_parse_error_to_py_err)?
+                    .into_upload_policy(),
+            ))
+        })
+    }
+
+    #[args(opts = "ToStringOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn async_to_token_string<'p>(
+        &self,
+        opts: ToStringOptions,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let provider = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            Ok(provider
+                .async_to_token_string(opts.0)
+                .await
+                .map_err(convert_to_string_error_to_py_err)?
+                .into_owned())
+        })
+    }
+
+    #[args(opts = "GetPolicyOptions::default()")]
+    #[pyo3(text_signature = "($self, opts)")]
+    fn async_bucket_name<'p>(&self, opts: GetPolicyOptions, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let provider = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            Ok(provider
+                .async_bucket_name(opts.0)
+                .await
+                .map_err(convert_parse_error_to_py_err)?
+                .to_string())
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> PyResult<String> {
+        self.to_token_string(Default::default())
+    }
+}
+
+impl UploadTokenProvider {
+    pub(super) fn into_inner(self) -> Box<dyn qiniu_sdk::upload_token::UploadTokenProvider> {
+        self.0
+    }
+}
+
+fn convert_parse_error_to_py_err(err: ParseError) -> PyErr {
+    match err {
+        ParseError::CredentialGetError(err) => PyIOError::new_err(err),
+        err => PyValueError::new_err(err.to_string()),
+    }
+}
+
+fn convert_to_string_error_to_py_err(err: ToStringError) -> PyErr {
+    match err {
+        ToStringError::CredentialGetError(err) => PyIOError::new_err(err),
+        ToStringError::CallbackError(err) => QiniuCallbackError::new_err(err.to_string()),
+        err => QiniuUnknownError::new_err(err.to_string()),
+    }
+}
+
+#[pyclass(extends = UploadTokenProvider)]
+struct StaticUploadTokenProvider;
+
+#[pymethods]
+impl StaticUploadTokenProvider {
+    #[new]
+    fn new(upload_token: &str) -> (Self, UploadTokenProvider) {
+        (
+            Self,
+            UploadTokenProvider(Box::new(
+                qiniu_sdk::upload_token::StaticUploadTokenProvider::new(upload_token),
+            )),
+        )
+    }
+}
+
+#[pyclass(extends = UploadTokenProvider)]
+struct FromUploadPolicy;
+
+#[pymethods]
+impl FromUploadPolicy {
+    #[new]
+    fn new(
+        upload_policy: UploadPolicy,
+        credential: CredentialProvider,
+    ) -> (Self, UploadTokenProvider) {
+        (
+            Self,
+            UploadTokenProvider(Box::new(qiniu_sdk::upload_token::FromUploadPolicy::new(
+                upload_policy.0,
+                credential.into_inner(),
+            ))),
+        )
+    }
+}
+
+#[pyclass(extends = UploadTokenProvider)]
+struct BucketUploadTokenProvider;
+
+#[pymethods]
+impl BucketUploadTokenProvider {
+    #[new]
+    #[args(opts = "**")]
+    fn new(
+        bucket: &str,
+        upload_token_lifetime: u64,
+        credential: CredentialProvider,
+        opts: Option<&PyDict>,
+    ) -> (Self, UploadTokenProvider) {
+        let mut builder = qiniu_sdk::upload_token::BucketUploadTokenProvider::builder(
+            bucket,
+            Duration::from_secs(upload_token_lifetime),
+            credential.into_inner(),
+        );
+        if let Some(opts) = opts {
+            if let Some(any) = opts.get_item("on_policy_generated") {
+                builder = set_on_policy_generated_to_builder(builder, any);
+            }
+        }
+        let provider = builder.build();
+        return (Self, UploadTokenProvider(Box::new(provider)));
+
+        fn set_on_policy_generated_to_builder<'a, C: Clone + 'a>(
+            mut builder: qiniu_sdk::upload_token::BucketUploadTokenProviderBuilder<'a, C>,
+            any: &PyAny,
+        ) -> qiniu_sdk::upload_token::BucketUploadTokenProviderBuilder<'a, C> {
+            if any.is_callable() {
+                builder = Python::with_gil(|py| {
+                    let obj = any.to_object(py);
+                    builder.on_policy_generated(move |upload_policy_builder| {
+                        let builder = UploadPolicyBuilder(take(upload_policy_builder));
+                        let builder = Python::with_gil(|py| {
+                            obj.call1(py, PyTuple::new(py, [builder]))
+                                .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
+                        })?;
+                        *upload_policy_builder = builder.0;
+                        Ok(())
+                    })
+                });
+            }
+            builder
+        }
+    }
+}
+
+#[pyclass(extends = UploadTokenProvider)]
+struct ObjectUploadTokenProvider;
+
+#[pymethods]
+impl ObjectUploadTokenProvider {
+    #[new]
+    #[args(opts = "**")]
+    fn new(
+        bucket: &str,
+        object: &str,
+        upload_token_lifetime: u64,
+        credential: CredentialProvider,
+        opts: Option<&PyDict>,
+    ) -> (Self, UploadTokenProvider) {
+        let mut builder = qiniu_sdk::upload_token::ObjectUploadTokenProvider::builder(
+            bucket,
+            object,
+            Duration::from_secs(upload_token_lifetime),
+            credential.into_inner(),
+        );
+        if let Some(opts) = opts {
+            if let Some(any) = opts.get_item("on_policy_generated") {
+                builder = set_on_policy_generated_to_builder(builder, any);
+            }
+        }
+        let provider = builder.build();
+        return (Self, UploadTokenProvider(Box::new(provider)));
+
+        fn set_on_policy_generated_to_builder<'a, C: Clone + 'a>(
+            mut builder: qiniu_sdk::upload_token::ObjectUploadTokenProviderBuilder<'a, C>,
+            any: &PyAny,
+        ) -> qiniu_sdk::upload_token::ObjectUploadTokenProviderBuilder<'a, C> {
+            if any.is_callable() {
+                builder = Python::with_gil(|py| {
+                    let obj = any.to_object(py);
+                    builder.on_policy_generated(move |upload_policy_builder| {
+                        let builder = UploadPolicyBuilder(take(upload_policy_builder));
+                        let builder = Python::with_gil(|py| {
+                            obj.call1(py, PyTuple::new(py, [builder]))
+                                .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
+                        })?;
+                        *upload_policy_builder = builder.0;
+                        Ok(())
+                    })
+                });
+            }
+            builder
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Default, Copy, Clone)]
+struct GetAccessKeyOptions(qiniu_sdk::upload_token::GetAccessKeyOptions);
+
+#[pymethods]
+impl GetAccessKeyOptions {
+    #[new]
+    fn new() -> Self {
+        Default::default()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+#[pyclass]
+#[derive(Default, Copy, Clone)]
+struct GetPolicyOptions(qiniu_sdk::upload_token::GetPolicyOptions);
+
+#[pymethods]
+impl GetPolicyOptions {
+    #[new]
+    fn new() -> Self {
+        Default::default()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+#[pyclass]
+#[derive(Default, Copy, Clone)]
+struct ToStringOptions(qiniu_sdk::upload_token::ToStringOptions);
+
+#[pymethods]
+impl ToStringOptions {
+    #[new]
+    fn new() -> Self {
+        Default::default()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }

@@ -16,7 +16,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 }
 
 #[pyclass]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Credential(qiniu_sdk::credential::Credential);
 
 #[pymethods]
@@ -239,8 +239,8 @@ impl Credential {
 }
 
 #[pyclass(subclass)]
-#[derive(Debug, Clone)]
-struct CredentialProvider(Box<dyn qiniu_sdk::credential::CredentialProvider>);
+#[derive(Clone)]
+pub(super) struct CredentialProvider(Box<dyn qiniu_sdk::credential::CredentialProvider>);
 
 #[pymethods]
 impl CredentialProvider {
@@ -268,8 +268,13 @@ impl CredentialProvider {
     }
 }
 
+impl CredentialProvider {
+    pub(super) fn into_inner(self) -> Box<dyn qiniu_sdk::credential::CredentialProvider> {
+        self.0
+    }
+}
+
 #[pyclass(extends = CredentialProvider)]
-#[derive(Debug, Copy, Clone, Default)]
 struct GlobalCredentialProvider;
 
 #[pymethods]
@@ -296,7 +301,6 @@ impl GlobalCredentialProvider {
 }
 
 #[pyclass(extends = CredentialProvider)]
-#[derive(Debug, Copy, Clone, Default)]
 struct EnvCredentialProvider;
 
 #[pymethods]
@@ -323,7 +327,6 @@ impl EnvCredentialProvider {
 }
 
 #[pyclass(extends = CredentialProvider)]
-#[derive(Debug, Copy, Clone, Default)]
 struct StaticCredentialProvider;
 
 #[pymethods]
@@ -335,7 +338,6 @@ impl StaticCredentialProvider {
 }
 
 #[pyclass(extends = CredentialProvider)]
-#[derive(Debug, Copy, Clone, Default)]
 struct ChainCredentialsProvider;
 
 #[pymethods]
@@ -361,7 +363,7 @@ impl ChainCredentialsProvider {
 }
 
 #[pyclass]
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Default, Copy, Clone)]
 struct GetOptions(qiniu_sdk::credential::GetOptions);
 
 #[pymethods]
