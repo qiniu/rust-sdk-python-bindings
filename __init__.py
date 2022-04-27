@@ -1,1 +1,1 @@
-from .qiniu_sdk_python_bindings import *
+from .qiniu_sdk_bindings import *
