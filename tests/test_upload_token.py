@@ -4,79 +4,159 @@ import unittest
 
 class TestUploadPolicy(unittest.TestCase):
     def test_bucket_policy(self):
-        policy = upload_token.UploadPolicy.new_for_bucket('test-bucket', 3600)
+        policy = upload_token.UploadPolicy.new_for_bucket(
+            'test-bucket', 3600).build()
         self.assertEqual(policy.bucket(), 'test-bucket')
 
     def test_object_policy(self):
         policy = upload_token.UploadPolicy.new_for_object(
-            'test-bucket', 'test-object', 3600)
+            'test-bucket', 'test-object', 3600).build()
         self.assertEqual(policy.bucket(), 'test-bucket')
         self.assertEqual(policy.key(), 'test-object')
         self.assertFalse(policy.use_prefixal_object_key())
 
     def test_object_prefix_policy(self):
         policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600)
+            'test-bucket', 'test-object', 3600).build()
         self.assertEqual(policy.bucket(), 'test-bucket')
         self.assertEqual(policy.key(), 'test-object')
         self.assertTrue(policy.use_prefixal_object_key())
 
     def test_json_convertion(self):
         policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600)
+            'test-bucket', 'test-object', 3600).build()
         new_policy = upload_token.UploadPolicy.from_json(policy.as_json())
         self.assertEqual(new_policy.bucket(), 'test-bucket')
         self.assertEqual(new_policy.key(), 'test-object')
         self.assertTrue(new_policy.use_prefixal_object_key())
 
     def test_insert_only(self):
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600, insertOnly=1)
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.insert_only()
+        policy = builder.build()
         self.assertTrue(policy.is_insert_only())
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600, insertOnly=0)
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, insertOnly=1).build()
+        self.assertTrue(policy.is_insert_only())
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, insertOnly=0).build()
         self.assertFalse(policy.is_insert_only())
 
     def test_mime_detection(self):
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600, detectMime=1)
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.enable_mime_detection()
+        policy = builder.build()
         self.assertTrue(policy.mime_detection_enabled())
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600, detectMime=0)
+
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.disable_mime_detection()
+        policy = builder.build()
+        self.assertFalse(policy.mime_detection_enabled())
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, detectMime=1).build()
+        self.assertTrue(policy.mime_detection_enabled())
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, detectMime=0).build()
         self.assertFalse(policy.mime_detection_enabled())
 
     def test_return_url(self):
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600, returnUrl='http://www.qiniu.com')
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.return_url('http://www.qiniu.com')
+        policy = builder.build()
         self.assertEqual(policy.return_url(), 'http://www.qiniu.com')
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
+
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.return_url('http://www.qiniu.com')
+        builder.return_body(
+            '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+        policy = builder.build()
+        self.assertEqual(policy.return_url(), 'http://www.qiniu.com')
+        self.assertEqual(policy.return_body(
+        ), '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, returnUrl='http://www.qiniu.com').build()
+        self.assertEqual(policy.return_url(), 'http://www.qiniu.com')
+
+        policy = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600,
             returnUrl='http://www.qiniu.com',
-            returnBody='{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+            returnBody='{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}').build()
         self.assertEqual(policy.return_url(), 'http://www.qiniu.com')
         self.assertEqual(policy.return_body(
         ), '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
 
     def test_callback_urls(self):
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.callback(['http://cb1.com', 'http://cb2.com'], '',
+                         '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+        policy = builder.build()
+        self.assertEqual(policy.callback_urls(), [
+            'http://cb1.com', 'http://cb2.com'])
+        self.assertEqual(policy.callback_body(
+        ), '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+
+        policy = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600,
             callbackUrl='http://cb1.com;http://cb2.com',
-            callbackBody='{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
+            callbackBody='{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}').build()
         self.assertEqual(policy.callback_urls(), [
             'http://cb1.com', 'http://cb2.com'])
         self.assertEqual(policy.callback_body(
         ), '{"key":$(key),"hash":$(etag),"w":$(imageInfo.width),"h":$(imageInfo.height)}')
 
     def test_save_key(self):
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
-            'test-bucket', 'test-object', 3600,
-            saveKey='test-save-key', forceSaveKey=False)
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.save_as('test-save-key')
+        policy = builder.build()
         self.assertEqual(policy.save_key(), 'test-save-key')
         self.assertFalse(policy.is_save_key_forced())
-        policy = upload_token.UploadPolicy.new_for_objects_with_prefix(
+
+        policy = upload_token.UploadPolicy.new_for_object(
             'test-bucket', 'test-object', 3600,
-            saveKey='test-save-key', forceSaveKey=True)
+            saveKey='test-save-key', forceSaveKey=False).build()
+        self.assertEqual(policy.save_key(), 'test-save-key')
+        self.assertFalse(policy.is_save_key_forced())
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600,
+            saveKey='test-save-key', forceSaveKey=True).build()
         self.assertEqual(policy.save_key(), 'test-save-key')
         self.assertTrue(policy.is_save_key_forced())
         self.assertSetEqual(set(policy.keys()), {
-                            'deadline', 'forceSaveKey', 'isPrefixalScope', 'saveKey', 'scope'})
+                            'deadline', 'forceSaveKey', 'saveKey', 'scope'})
+
+    def test_file_size_limitation(self):
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.file_size_limitation(None, 5)
+        policy = builder.build()
+        self.assertEqual(policy.minimal_file_size(), None)
+        self.assertEqual(policy.maximal_file_size(), 5)
+
+        builder = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600)
+        builder.file_size_limitation(5)
+        policy = builder.build()
+        self.assertEqual(policy.minimal_file_size(), 5)
+        self.assertEqual(policy.maximal_file_size(), None)
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, fsizeMin=5).build()
+        self.assertEqual(policy.minimal_file_size(), 5)
+        self.assertEqual(policy.maximal_file_size(), None)
+
+        policy = upload_token.UploadPolicy.new_for_object(
+            'test-bucket', 'test-object', 3600, fsizeLimit=5).build()
+        self.assertEqual(policy.minimal_file_size(), None)
+        self.assertEqual(policy.maximal_file_size(), 5)
