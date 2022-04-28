@@ -1,14 +1,24 @@
+use super::exceptions::{
+    QiniuInvalidHeaderName, QiniuInvalidHeaderValue, QiniuInvalidIpAddrError, QiniuInvalidMethod,
+    QiniuInvalidURLError,
+};
 use futures::{future::BoxFuture, io::Cursor, ready, AsyncRead, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
+use qiniu_sdk::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
 use smart_default::SmartDefault;
 use std::{
+    collections::HashMap,
     fmt::{self, Debug},
-    io::{Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Write},
+    io::{
+        Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write,
+    },
+    net::IpAddr,
     pin::Pin,
     task::{Context, Poll},
 };
 
 const READ: &str = "read";
+const SEEK: &str = "seek";
 const WRITE: &str = "write";
 const FLUSH: &str = "flush";
 
@@ -36,6 +46,19 @@ impl PythonIoBase {
         })
     }
 
+    fn _seek(&mut self, seek_from: SeekFrom) -> PyResult<u64> {
+        let (offset, whence) = match seek_from {
+            SeekFrom::Start(offset) => (offset as i64, 0),
+            SeekFrom::Current(offset) => (offset, 1),
+            SeekFrom::End(offset) => (offset as i64, 2),
+        };
+        Python::with_gil(|py| {
+            let args = PyTuple::new(py, [offset, whence]);
+            let retval = self.io_base.call_method1(py, SEEK, args)?;
+            retval.extract::<u64>(py)
+        })
+    }
+
     fn _write(&mut self, buf: &[u8]) -> PyResult<usize> {
         Python::with_gil(|py| {
             let args = PyTuple::new(py, [buf]);
@@ -56,6 +79,12 @@ impl PythonIoBase {
 impl Read for PythonIoBase {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         self._read(buf).map_err(make_io_error_from_py_err)
+    }
+}
+
+impl Seek for PythonIoBase {
+    fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        self._seek(pos).map_err(make_io_error_from_py_err)
     }
 }
 
@@ -162,4 +191,55 @@ fn extract_bytes_from_py_object(py: Python<'_>, obj: PyObject) -> PyResult<Vec<u
 
 fn make_io_error_from_py_err(err: PyErr) -> IoError {
     IoError::new(IoErrorKind::Other, err)
+}
+
+pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
+    let url = url
+        .parse::<Uri>()
+        .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
+    Ok(url)
+}
+
+pub(super) fn parse_method(method: &str) -> PyResult<Method> {
+    let method = method
+        .parse::<Method>()
+        .map_err(|err| QiniuInvalidMethod::new_err(err.to_string()))?;
+    Ok(method)
+}
+
+pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
+    headers
+        .into_iter()
+        .map(|(name, value)| {
+            let name = name
+                .parse::<HeaderName>()
+                .map_err(|err| QiniuInvalidHeaderName::new_err(err.to_string()))?;
+            let value = value
+                .parse::<HeaderValue>()
+                .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
+            Ok((name, value))
+        })
+        .collect()
+}
+
+pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
+    if let Some(header_value) = header_value {
+        let header_value = header_value
+            .parse::<HeaderValue>()
+            .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
+        Ok(Some(header_value))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
+    ip_addrs
+        .into_iter()
+        .map(|ip_addr| {
+            ip_addr
+                .parse::<IpAddr>()
+                .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
+        })
+        .collect()
 }

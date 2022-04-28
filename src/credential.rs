@@ -1,12 +1,8 @@
 use super::{
-    exceptions::{
-        QiniuEmptyChainCredentialsProvider, QiniuInvalidHeaderName, QiniuInvalidHeaderValue,
-        QiniuInvalidURLError,
-    },
-    utils::PythonIoBase,
+    exceptions::QiniuEmptyChainCredentialsProvider,
+    utils::{parse_header_value, parse_headers, parse_method, parse_uri, PythonIoBase},
 };
-use pyo3::{exceptions::PyValueError, prelude::*};
-use qiniu_sdk::credential::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
+use pyo3::prelude::*;
 use std::{collections::HashMap, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
@@ -78,7 +74,7 @@ impl Credential {
     fn sign_download_url(&self, url: &str, secs: u64) -> PyResult<String> {
         Ok(self
             .0
-            .sign_download_url(Self::parse_uri(url)?, Duration::from_secs(secs))
+            .sign_download_url(parse_uri(url)?, Duration::from_secs(secs))
             .to_string())
     }
 
@@ -89,8 +85,8 @@ impl Credential {
         content_type: Option<&str>,
         body: &[u8],
     ) -> PyResult<String> {
-        let url = Self::parse_uri(url)?;
-        let content_type = Self::parse_header_value(content_type)?;
+        let url = parse_uri(url)?;
+        let content_type = parse_header_value(content_type)?;
         Ok(self
             .0
             .authorization_v1_for_request(&url, content_type.as_ref(), body))
@@ -103,8 +99,8 @@ impl Credential {
         content_type: Option<&str>,
         body: PyObject,
     ) -> PyResult<String> {
-        let url = Self::parse_uri(url)?;
-        let content_type = Self::parse_header_value(content_type)?;
+        let url = parse_uri(url)?;
+        let content_type = parse_header_value(content_type)?;
         let auth = self.0.authorization_v1_for_request_with_body_reader(
             &url,
             content_type.as_ref(),
@@ -121,8 +117,8 @@ impl Credential {
         body: PyObject,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
-        let url = Self::parse_uri(url)?;
-        let content_type = Self::parse_header_value(content_type)?;
+        let url = parse_uri(url)?;
+        let content_type = parse_header_value(content_type)?;
         let credential = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let auth = credential
@@ -144,9 +140,9 @@ impl Credential {
         headers: HashMap<String, String>,
         body: &[u8],
     ) -> PyResult<String> {
-        let method = Self::parse_method(method)?;
-        let url = Self::parse_uri(url)?;
-        let headers = Self::parse_headers(headers)?;
+        let method = parse_method(method)?;
+        let url = parse_uri(url)?;
+        let headers = parse_headers(headers)?;
         Ok(self
             .0
             .authorization_v2_for_request(&method, &url, &headers, body))
@@ -160,9 +156,9 @@ impl Credential {
         headers: HashMap<String, String>,
         body: PyObject,
     ) -> PyResult<String> {
-        let method = Self::parse_method(method)?;
-        let url = Self::parse_uri(url)?;
-        let headers = Self::parse_headers(headers)?;
+        let method = parse_method(method)?;
+        let url = parse_uri(url)?;
+        let headers = parse_headers(headers)?;
         let auth = self.0.authorization_v2_for_request_with_body_reader(
             &method,
             &url,
@@ -181,9 +177,9 @@ impl Credential {
         body: PyObject,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
-        let method = Self::parse_method(method)?;
-        let url = Self::parse_uri(url)?;
-        let headers = Self::parse_headers(headers)?;
+        let method = parse_method(method)?;
+        let url = parse_uri(url)?;
+        let headers = parse_headers(headers)?;
         let credential = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let auth = credential
@@ -196,48 +192,6 @@ impl Credential {
                 .await?;
             Ok(auth)
         })
-    }
-}
-
-impl Credential {
-    fn parse_uri(url: &str) -> PyResult<Uri> {
-        let url = url
-            .parse::<Uri>()
-            .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
-        Ok(url)
-    }
-
-    fn parse_method(method: &str) -> PyResult<Method> {
-        let method = method
-            .parse::<Method>()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
-        Ok(method)
-    }
-
-    fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
-        headers
-            .into_iter()
-            .map(|(name, value)| {
-                let name = name
-                    .parse::<HeaderName>()
-                    .map_err(|err| QiniuInvalidHeaderName::new_err(err.to_string()))?;
-                let value = value
-                    .parse::<HeaderValue>()
-                    .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
-                Ok((name, value))
-            })
-            .collect()
-    }
-
-    fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
-        if let Some(header_value) = header_value {
-            let header_value = header_value
-                .parse::<HeaderValue>()
-                .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
-            Ok(Some(header_value))
-        } else {
-            Ok(None)
-        }
     }
 }
 
