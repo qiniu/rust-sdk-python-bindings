@@ -1,4 +1,10 @@
-use super::utils::PythonIoBase;
+use super::{
+    exceptions::{
+        QiniuEmptyChainCredentialsProvider, QiniuInvalidHeaderName, QiniuInvalidHeaderValue,
+        QiniuInvalidURLError,
+    },
+    utils::PythonIoBase,
+};
 use pyo3::{exceptions::PyValueError, prelude::*};
 use qiniu_sdk::credential::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
 use std::{collections::HashMap, time::Duration};
@@ -70,12 +76,9 @@ impl Credential {
 
     #[pyo3(text_signature = "($self, url, secs)")]
     fn sign_download_url(&self, url: &str, secs: u64) -> PyResult<String> {
-        let url = url
-            .parse::<Uri>()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
         Ok(self
             .0
-            .sign_download_url(url, Duration::from_secs(secs))
+            .sign_download_url(Self::parse_uri(url)?, Duration::from_secs(secs))
             .to_string())
     }
 
@@ -200,7 +203,7 @@ impl Credential {
     fn parse_uri(url: &str) -> PyResult<Uri> {
         let url = url
             .parse::<Uri>()
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
         Ok(url)
     }
 
@@ -217,10 +220,10 @@ impl Credential {
             .map(|(name, value)| {
                 let name = name
                     .parse::<HeaderName>()
-                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                    .map_err(|err| QiniuInvalidHeaderName::new_err(err.to_string()))?;
                 let value = value
                     .parse::<HeaderValue>()
-                    .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                    .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
                 Ok((name, value))
             })
             .collect()
@@ -230,7 +233,7 @@ impl Credential {
         if let Some(header_value) = header_value {
             let header_value = header_value
                 .parse::<HeaderValue>()
-                .map_err(|err| PyValueError::new_err(err.to_string()))?;
+                .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
             Ok(Some(header_value))
         } else {
             Ok(None)
@@ -357,7 +360,9 @@ impl ChainCredentialsProvider {
         if let Some(builder) = &mut builder {
             Ok((Self, CredentialProvider(Box::new(builder.build()))))
         } else {
-            Err(PyValueError::new_err("creds is empty"))
+            Err(QiniuEmptyChainCredentialsProvider::new_err(
+                "creds is empty",
+            ))
         }
     }
 }

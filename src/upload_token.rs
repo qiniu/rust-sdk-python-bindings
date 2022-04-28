@@ -1,6 +1,11 @@
-use super::{credential::CredentialProvider, QiniuCallbackError, QiniuUnknownError};
+use super::{
+    credential::CredentialProvider,
+    exceptions::{
+        QiniuBase64Error, QiniuCallbackError, QiniuIoError, QiniuJsonError, QiniuTimeError,
+        QiniuUnknownError, QiniuUnsupportedTypeError, QiniuUploadTokenFormatError,
+    },
+};
 use pyo3::{
-    exceptions::{PyIOError, PyValueError},
     prelude::*,
     types::{PyDict, PyString, PyTuple},
 };
@@ -78,7 +83,7 @@ impl UploadPolicy {
     #[pyo3(text_signature = "(json)")]
     fn from_json(json: &str) -> PyResult<Self> {
         let policy = qiniu_sdk::upload_token::UploadPolicy::from_json(json)
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(|err| QiniuJsonError::new_err(err.to_string()))?;
         Ok(UploadPolicy(policy))
     }
 
@@ -117,7 +122,7 @@ impl UploadPolicy {
                     .map(|duration| duration.as_secs())
             })
             .map_or(Ok(None), |v| v.map(Some))
-            .map_err(|err| PyValueError::new_err(err.to_string()))
+            .map_err(|err| QiniuTimeError::new_err(err.to_string()))
     }
 
     #[pyo3(text_signature = "($self)")]
@@ -246,7 +251,7 @@ fn convert_py_any_to_json_value(any: &PyAny) -> PyResult<serde_json::Value> {
     } else if let Ok(value) = any.extract::<f64>() {
         Ok(serde_json::Value::from(value))
     } else {
-        Err(PyValueError::new_err(format!(
+        Err(QiniuUnsupportedTypeError::new_err(format!(
             "Unsupported type: {:?}",
             any
         )))
@@ -269,14 +274,17 @@ fn convert_json_value_to_py_object(
             } else if let Some(n) = n.as_f64() {
                 Ok(n.to_object(py))
             } else {
-                Err(PyValueError::new_err(format!(
+                Err(QiniuUnsupportedTypeError::new_err(format!(
                     "Unsupported number type: {:?}",
                     n
                 )))
             }
         }
         serde_json::Value::Bool(b) => Ok(b.to_object(py)),
-        v => Err(PyValueError::new_err(format!("Unsupported type: {:?}", v))),
+        v => Err(QiniuUnsupportedTypeError::new_err(format!(
+            "Unsupported type: {:?}",
+            v
+        ))),
     }
 }
 
@@ -590,14 +598,20 @@ impl UploadTokenProvider {
 
 fn convert_parse_error_to_py_err(err: ParseError) -> PyErr {
     match err {
-        ParseError::CredentialGetError(err) => PyIOError::new_err(err),
-        err => PyValueError::new_err(err.to_string()),
+        ParseError::CredentialGetError(err) => QiniuIoError::new_err(err),
+        ParseError::InvalidUploadTokenFormat => {
+            QiniuUploadTokenFormatError::new_err(err.to_string())
+        }
+        ParseError::Base64DecodeError(err) => QiniuBase64Error::new_err(err.to_string()),
+        ParseError::JsonDecodeError(err) => QiniuJsonError::new_err(err.to_string()),
+        ParseError::CallbackError(err) => QiniuCallbackError::new_err(err.to_string()),
+        err => QiniuUnknownError::new_err(err.to_string()),
     }
 }
 
 fn convert_to_string_error_to_py_err(err: ToStringError) -> PyErr {
     match err {
-        ToStringError::CredentialGetError(err) => PyIOError::new_err(err),
+        ToStringError::CredentialGetError(err) => QiniuIoError::new_err(err),
         ToStringError::CallbackError(err) => QiniuCallbackError::new_err(err.to_string()),
         err => QiniuUnknownError::new_err(err.to_string()),
     }
