@@ -2,13 +2,14 @@ use super::exceptions::{
     QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
     QiniuInvalidMethodError, QiniuInvalidURLError,
 };
-use futures::{future::BoxFuture, io::Cursor, ready, AsyncRead, FutureExt};
+use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
 use qiniu_sdk::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
 use smart_default::SmartDefault;
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
+    future::Future,
     io::{
         Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write,
     },
@@ -47,11 +48,7 @@ impl PythonIoBase {
     }
 
     fn _seek(&mut self, seek_from: SeekFrom) -> PyResult<u64> {
-        let (offset, whence) = match seek_from {
-            SeekFrom::Start(offset) => (offset as i64, 0),
-            SeekFrom::Current(offset) => (offset, 1),
-            SeekFrom::End(offset) => (offset as i64, 2),
-        };
+        let (offset, whence) = split_seek_from(seek_from);
         Python::with_gil(|py| {
             let args = PyTuple::new(py, [offset, whence]);
             let retval = self.io_base.call_method1(py, SEEK, args)?;
@@ -101,17 +98,31 @@ impl Write for PythonIoBase {
 #[derive(Debug)]
 pub(super) struct PythonIoBaseAsyncRead {
     base: PythonIoBase,
-    step: AsyncReadStep,
+    step: AsyncStep,
 }
+
+#[derive(SmartDefault, Debug)]
+enum AsyncStep {
+    #[default]
+    Free,
+    Reading(AsyncReadStep),
+    Seeking(AsyncSeekStep),
+}
+
+type SyncBoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + Sync + 'a>>;
 
 #[derive(SmartDefault)]
 enum AsyncReadStep {
-    Waiting(BoxFuture<'static, IoResult<Vec<u8>>>),
+    Waiting(SyncBoxFuture<'static, IoResult<Vec<u8>>>),
 
     #[default]
     Buffered(Cursor<Vec<u8>>),
 
     Done,
+}
+
+enum AsyncSeekStep {
+    Waiting(SyncBoxFuture<'static, IoResult<u64>>),
 }
 
 impl PythonIoBaseAsyncRead {
@@ -130,13 +141,13 @@ impl AsyncRead for PythonIoBaseAsyncRead {
         buf: &mut [u8],
     ) -> Poll<IoResult<usize>> {
         match &mut self.step {
-            AsyncReadStep::Waiting(fut) => match ready!(fut.poll_unpin(cx)) {
+            AsyncStep::Reading(AsyncReadStep::Waiting(fut)) => match ready!(fut.poll_unpin(cx)) {
                 Ok(buffered) if buffered.is_empty() => {
-                    self.step = AsyncReadStep::Done;
+                    self.step = AsyncStep::Reading(AsyncReadStep::Done);
                     Poll::Ready(Ok(0))
                 }
                 Ok(buffered) => {
-                    self.step = AsyncReadStep::Buffered(Cursor::new(buffered));
+                    self.step = AsyncStep::Reading(AsyncReadStep::Buffered(Cursor::new(buffered)));
                     self.poll_read(cx, buf)
                 }
                 Err(err) => {
@@ -144,28 +155,68 @@ impl AsyncRead for PythonIoBaseAsyncRead {
                     Poll::Ready(Err(err))
                 }
             },
-            AsyncReadStep::Buffered(buffered) => {
+            AsyncStep::Reading(AsyncReadStep::Buffered(buffered)) => {
                 match ready!(Pin::new(buffered).poll_read(cx, buf)) {
                     Ok(0) => {
                         let io_base = self.base.io_base.to_owned();
-                        self.step = AsyncReadStep::Waiting(Box::pin(async move {
-                            let retval = Python::with_gil(|py| {
-                                pyo3_asyncio::async_std::into_future(
-                                    io_base
-                                        .call_method1(py, READ, PyTuple::new(py, [1 << 20]))?
-                                        .as_ref(py),
-                                )
-                            })?
-                            .await?;
-                            Python::with_gil(|py| extract_bytes_from_py_object(py, retval))
-                                .map_err(make_io_error_from_py_err)
-                        }));
+                        self.step =
+                            AsyncStep::Reading(AsyncReadStep::Waiting(Box::pin(async move {
+                                let retval = Python::with_gil(|py| {
+                                    pyo3_asyncio::async_std::into_future(
+                                        io_base
+                                            .call_method1(py, READ, PyTuple::new(py, [1 << 20]))?
+                                            .as_ref(py),
+                                    )
+                                })?
+                                .await?;
+                                Python::with_gil(|py| extract_bytes_from_py_object(py, retval))
+                                    .map_err(make_io_error_from_py_err)
+                            })));
                         self.poll_read(cx, buf)
                     }
                     result => Poll::Ready(result),
                 }
             }
-            AsyncReadStep::Done => Poll::Ready(Ok(0)),
+            AsyncStep::Reading(AsyncReadStep::Done) => Poll::Ready(Ok(0)),
+            AsyncStep::Free => {
+                self.step = AsyncStep::Reading(Default::default());
+                self.poll_read(cx, buf)
+            }
+            AsyncStep::Seeking(AsyncSeekStep::Waiting { .. }) => unreachable!(),
+        }
+    }
+}
+
+impl AsyncSeek for PythonIoBaseAsyncRead {
+    fn poll_seek(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: SeekFrom,
+    ) -> Poll<IoResult<u64>> {
+        match &mut self.step {
+            AsyncStep::Free | AsyncStep::Reading(AsyncReadStep::Done) => {
+                let io_base = self.base.io_base.to_owned();
+                let (offset, whence) = split_seek_from(pos);
+                self.step = AsyncStep::Seeking(AsyncSeekStep::Waiting(Box::pin(async move {
+                    let retval = Python::with_gil(|py| {
+                        pyo3_asyncio::async_std::into_future(
+                            io_base
+                                .call_method1(py, SEEK, PyTuple::new(py, [offset, whence]))?
+                                .as_ref(py),
+                        )
+                    })?
+                    .await?;
+                    Python::with_gil(|py| retval.extract::<u64>(py))
+                        .map_err(make_io_error_from_py_err)
+                })));
+                self.poll_seek(cx, pos)
+            }
+            AsyncStep::Seeking(AsyncSeekStep::Waiting(fut)) => {
+                let result = ready!(fut.poll_unpin(cx));
+                self.step = AsyncStep::Free;
+                Poll::Ready(result)
+            }
+            AsyncStep::Reading { .. } => unreachable!(),
         }
     }
 }
@@ -176,6 +227,14 @@ impl Debug for AsyncReadStep {
             Self::Waiting { .. } => f.debug_tuple("Waiting").finish(),
             Self::Buffered(cursor) => f.debug_tuple("Buffered").field(cursor).finish(),
             Self::Done => f.debug_tuple("Done").finish(),
+        }
+    }
+}
+
+impl Debug for AsyncSeekStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Waiting { .. } => f.debug_tuple("Waiting").finish(),
         }
     }
 }
@@ -242,4 +301,12 @@ pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
                 .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
         })
         .collect()
+}
+
+fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {
+    match seek_from {
+        SeekFrom::Start(offset) => (offset as i64, 0),
+        SeekFrom::Current(offset) => (offset, 1),
+        SeekFrom::End(offset) => (offset as i64, 2),
+    }
 }
