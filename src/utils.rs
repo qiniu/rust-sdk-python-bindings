@@ -1,6 +1,6 @@
 use super::exceptions::{
-    QiniuInvalidHeaderName, QiniuInvalidHeaderValue, QiniuInvalidIpAddrError, QiniuInvalidMethod,
-    QiniuInvalidURLError,
+    QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
+    QiniuInvalidMethodError, QiniuInvalidURLError,
 };
 use futures::{future::BoxFuture, io::Cursor, ready, AsyncRead, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
@@ -203,7 +203,7 @@ pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
 pub(super) fn parse_method(method: &str) -> PyResult<Method> {
     let method = method
         .parse::<Method>()
-        .map_err(|err| QiniuInvalidMethod::new_err(err.to_string()))?;
+        .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
     Ok(method)
 }
 
@@ -213,10 +213,10 @@ pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<Header
         .map(|(name, value)| {
             let name = name
                 .parse::<HeaderName>()
-                .map_err(|err| QiniuInvalidHeaderName::new_err(err.to_string()))?;
+                .map_err(|err| QiniuInvalidHeaderNameError::new_err(err.to_string()))?;
             let value = value
                 .parse::<HeaderValue>()
-                .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
+                .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?;
             Ok((name, value))
         })
         .collect()
@@ -226,7 +226,7 @@ pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<
     if let Some(header_value) = header_value {
         let header_value = header_value
             .parse::<HeaderValue>()
-            .map_err(|err| QiniuInvalidHeaderValue::new_err(err.to_string()))?;
+            .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?;
         Ok(Some(header_value))
     } else {
         Ok(None)

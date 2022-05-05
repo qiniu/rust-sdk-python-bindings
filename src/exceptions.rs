@@ -12,17 +12,20 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuInvalidURLError>(),
     )?;
     m.add(
-        "QiniuInvalidHttpVersion",
-        py.get_type::<QiniuInvalidHttpVersion>(),
-    )?;
-    m.add("QiniuInvalidMethod", py.get_type::<QiniuInvalidMethod>())?;
-    m.add(
-        "QiniuInvalidHeaderName",
-        py.get_type::<QiniuInvalidHeaderName>(),
+        "QiniuInvalidHttpVersionError",
+        py.get_type::<QiniuInvalidHttpVersionError>(),
     )?;
     m.add(
-        "QiniuInvalidHeaderValue",
-        py.get_type::<QiniuInvalidHeaderValue>(),
+        "QiniuInvalidMethodError",
+        py.get_type::<QiniuInvalidMethodError>(),
+    )?;
+    m.add(
+        "QiniuInvalidHeaderNameError",
+        py.get_type::<QiniuInvalidHeaderNameError>(),
+    )?;
+    m.add(
+        "QiniuInvalidHeaderValueError",
+        py.get_type::<QiniuInvalidHeaderValueError>(),
     )?;
     m.add(
         "QiniuInvalidIpAddrError",
@@ -54,10 +57,22 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
 create_exception!(qiniu_sdk_bindings, QiniuCallbackError, PyException);
 create_exception!(qiniu_sdk_bindings, QiniuUnknownError, PyException);
 create_exception!(qiniu_sdk_bindings, QiniuInvalidURLError, PyValueError);
-create_exception!(qiniu_sdk_bindings, QiniuInvalidHttpVersion, PyValueError);
-create_exception!(qiniu_sdk_bindings, QiniuInvalidMethod, PyValueError);
-create_exception!(qiniu_sdk_bindings, QiniuInvalidHeaderName, PyValueError);
-create_exception!(qiniu_sdk_bindings, QiniuInvalidHeaderValue, PyValueError);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidHttpVersionError,
+    PyValueError
+);
+create_exception!(qiniu_sdk_bindings, QiniuInvalidMethodError, PyValueError);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidHeaderNameError,
+    PyValueError
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidHeaderValueError,
+    PyValueError
+);
 create_exception!(qiniu_sdk_bindings, QiniuInvalidIpAddrError, PyValueError);
 create_exception!(qiniu_sdk_bindings, QiniuBodySizeMissingError, PyTypeError);
 create_exception!(
