@@ -13,6 +13,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "http")?;
     m.add_class::<SyncHttpRequestBuilder>()?;
     m.add_class::<SyncHttpRequest>()?;
+    m.add_class::<Version>()?;
     Ok(m)
 }
 
@@ -81,6 +82,11 @@ impl SyncHttpRequestBuilder {
         let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
         self.0.resolved_ip_addrs(resolved_ip_addrs);
         Ok(())
+    }
+
+    #[pyo3(text_signature = "($self)")]
+    fn build(&mut self) -> SyncHttpRequest {
+        SyncHttpRequest(self.0.build())
     }
 
     #[pyo3(text_signature = "($self)")]
@@ -177,6 +183,11 @@ impl SyncHttpRequest {
     #[setter]
     fn set_body(&mut self, body: Vec<u8>) {
         *self.0.body_mut() = qiniu_sdk::http::SyncRequestBody::from(body);
+    }
+
+    #[getter]
+    fn get_user_agent(&self) -> String {
+        self.0.user_agent().to_string()
     }
 
     #[getter]
