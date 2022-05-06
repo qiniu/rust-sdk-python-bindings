@@ -12,6 +12,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuInvalidURLError>(),
     )?;
     m.add(
+        "QiniuInvalidStatusCodeError",
+        py.get_type::<QiniuInvalidStatusCodeError>(),
+    )?;
+    m.add(
         "QiniuInvalidHttpVersionError",
         py.get_type::<QiniuInvalidHttpVersionError>(),
     )?;
@@ -30,6 +34,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add(
         "QiniuInvalidIpAddrError",
         py.get_type::<QiniuInvalidIpAddrError>(),
+    )?;
+    m.add(
+        "QiniuInvalidPortError",
+        py.get_type::<QiniuInvalidPortError>(),
     )?;
     m.add(
         "QiniuEmptyChainCredentialsProvider",
@@ -59,6 +67,11 @@ create_exception!(qiniu_sdk_bindings, QiniuUnknownError, PyException);
 create_exception!(qiniu_sdk_bindings, QiniuInvalidURLError, PyValueError);
 create_exception!(
     qiniu_sdk_bindings,
+    QiniuInvalidStatusCodeError,
+    PyValueError
+);
+create_exception!(
+    qiniu_sdk_bindings,
     QiniuInvalidHttpVersionError,
     PyValueError
 );
@@ -74,6 +87,7 @@ create_exception!(
     PyValueError
 );
 create_exception!(qiniu_sdk_bindings, QiniuInvalidIpAddrError, PyValueError);
+create_exception!(qiniu_sdk_bindings, QiniuInvalidPortError, PyValueError);
 create_exception!(qiniu_sdk_bindings, QiniuBodySizeMissingError, PyTypeError);
 create_exception!(
     qiniu_sdk_bindings,

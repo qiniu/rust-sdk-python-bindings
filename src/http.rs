@@ -1,13 +1,19 @@
 use super::{
     exceptions::{
-        QiniuBodySizeMissingError, QiniuInvalidHeaderValueError, QiniuInvalidHttpVersionError,
-        QiniuInvalidMethodError, QiniuInvalidURLError,
+        QiniuBodySizeMissingError, QiniuInvalidHttpVersionError, QiniuInvalidIpAddrError,
+        QiniuInvalidMethodError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
     },
-    utils::{parse_headers, parse_ip_addrs, parse_method, parse_uri, PythonIoBase},
+    utils::{
+        convert_headers_to_hashmap, parse_headers, parse_ip_addrs, parse_method, parse_port,
+        parse_uri, PythonIoBase,
+    },
 };
 use pyo3::{prelude::*, types::PyDict};
-use qiniu_sdk::http::{header::ToStrError, Method, Uri};
-use std::{borrow::Cow, collections::HashMap, convert::TryInto};
+use qiniu_sdk::http::{Method, StatusCode, Uri};
+use std::{
+    borrow::Cow, collections::HashMap, convert::TryInto, net::IpAddr, num::NonZeroU16,
+    time::Duration,
+};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "http")?;
@@ -74,6 +80,8 @@ macro_rules! impl_http_request_builder {
             fn __str__(&self) -> String {
                 self.__repr__()
             }
+
+            // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
         }
     };
 }
@@ -190,16 +198,7 @@ macro_rules! impl_http_request {
 
             #[getter]
             fn get_headers(&self) -> PyResult<HashMap<String, String>> {
-                self.0
-                    .headers()
-                    .iter()
-                    .map(|(name, value)| {
-                        value
-                            .to_str()
-                            .map(|value| (name.to_string(), value.to_string()))
-                    })
-                    .collect::<Result<_, ToStrError>>()
-                    .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))
+                convert_headers_to_hashmap(self.0.headers())
             }
 
             #[setter]
@@ -236,6 +235,8 @@ macro_rules! impl_http_request {
                 *self.0.resolved_ip_addrs_mut() = Some(Cow::Owned(resolved_ip_addrs));
                 Ok(())
             }
+
+            // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
         }
     };
 }
@@ -458,5 +459,352 @@ impl From<Version> for qiniu_sdk::http::Version {
             Version::HTTP_2 => qiniu_sdk::http::Version::HTTP_2,
             Version::HTTP_3 => qiniu_sdk::http::Version::HTTP_3,
         }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct Metrics(qiniu_sdk::http::Metrics);
+
+#[pymethods]
+impl Metrics {
+    #[new]
+    #[args(opts = "**")]
+    fn new(opts: Option<PyObject>, py: Python<'_>) -> Self {
+        let mut builder = qiniu_sdk::http::MetricsBuilder::default();
+        if let Some(opts) = opts {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "total_duration") {
+                builder.total_duration(duration);
+            }
+            if let Some(duration) = parse_duration(opts.as_ref(py), "name_lookup_duration") {
+                builder.name_lookup_duration(duration);
+            }
+            if let Some(duration) = parse_duration(opts.as_ref(py), "connect_duration") {
+                builder.connect_duration(duration);
+            }
+            if let Some(duration) = parse_duration(opts.as_ref(py), "secure_connect_duration") {
+                builder.secure_connect_duration(duration);
+            }
+            if let Some(duration) = parse_duration(opts.as_ref(py), "redirect_duration") {
+                builder.redirect_duration(duration);
+            }
+            if let Some(duration) = parse_duration(opts.as_ref(py), "transfer_duration") {
+                builder.transfer_duration(duration);
+            }
+        }
+        return Self(builder.build());
+
+        fn parse_duration(opts: &PyAny, item_name: &str) -> Option<Duration> {
+            if let Ok(duration) = opts.get_item(item_name) {
+                if let Ok(micros) = duration.extract::<u64>() {
+                    return Some(Duration::from_micros(micros));
+                }
+            }
+            None
+        }
+    }
+
+    #[getter]
+    fn get_total_duration(&self) -> Option<u128> {
+        self.0.total_duration().map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_total_duration(&mut self, duration: u64) {
+        *self.0.total_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    #[getter]
+    fn get_name_lookup_duration(&self) -> Option<u128> {
+        self.0
+            .name_lookup_duration()
+            .map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_name_lookup_duration(&mut self, duration: u64) {
+        *self.0.name_lookup_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    #[getter]
+    fn get_connect_duration(&self) -> Option<u128> {
+        self.0
+            .connect_duration()
+            .map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_connect_duration(&mut self, duration: u64) {
+        *self.0.connect_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    #[getter]
+    fn get_secure_connect_duration(&self) -> Option<u128> {
+        self.0
+            .secure_connect_duration()
+            .map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_secure_connect_duration(&mut self, duration: u64) {
+        *self.0.secure_connect_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    #[getter]
+    fn get_redirect_duration(&self) -> Option<u128> {
+        self.0
+            .redirect_duration()
+            .map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_redirect_duration(&mut self, duration: u64) {
+        *self.0.redirect_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    #[getter]
+    fn get_transfer_duration(&self) -> Option<u128> {
+        self.0
+            .transfer_duration()
+            .map(|duration| duration.as_micros())
+    }
+
+    #[setter]
+    fn set_transfer_duration(&mut self, duration: u64) {
+        *self.0.transfer_duration_mut() = Some(Duration::from_micros(duration));
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+#[pyclass(subclass)]
+struct ResponseParts(qiniu_sdk::http::ResponseParts);
+
+#[pymethods]
+impl ResponseParts {
+    #[getter]
+    fn get_status_code(&self) -> u16 {
+        self.0.status_code().as_u16()
+    }
+
+    #[setter]
+    fn set_status_code(&mut self, status_code: u16) -> PyResult<()> {
+        *self.0.status_code_mut() = StatusCode::from_u16(status_code)
+            .map_err(|err| QiniuInvalidStatusCodeError::new_err(err.to_string()))?;
+        Ok(())
+    }
+
+    #[getter]
+    fn get_headers(&self) -> PyResult<HashMap<String, String>> {
+        convert_headers_to_hashmap(self.0.headers())
+    }
+
+    #[setter]
+    fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
+        *self.0.headers_mut() = parse_headers(headers)?;
+        Ok(())
+    }
+
+    #[getter]
+    fn get_version(&self) -> PyResult<Version> {
+        self.0
+            .version()
+            .try_into()
+            .map_err(|err: PyErr| QiniuInvalidHttpVersionError::new_err(err.to_string()))
+    }
+
+    #[setter]
+    fn set_version(&mut self, version: Version) {
+        *self.0.version_mut() = version.into();
+    }
+
+    #[getter]
+    fn get_server_ip(&self) -> Option<String> {
+        self.0.server_ip().map(|ip| ip.to_string())
+    }
+
+    #[setter]
+    fn set_server_ip(&mut self, server_ip: String) -> PyResult<()> {
+        *self.0.server_ip_mut() = server_ip
+            .parse::<IpAddr>()
+            .map(Some)
+            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?;
+        Ok(())
+    }
+
+    #[getter]
+    fn get_server_port(&self) -> Option<u16> {
+        self.0.server_port().map(|ip| ip.get())
+    }
+
+    #[setter]
+    fn set_server_port(&mut self, server_port: u16) {
+        *self.0.server_port_mut() = NonZeroU16::new(server_port);
+    }
+
+    #[getter]
+    fn get_metrics(&self) -> Option<Metrics> {
+        self.0.metrics().cloned().map(Metrics)
+    }
+
+    #[setter]
+    fn set_metrics(&mut self, metrics: Metrics) {
+        *self.0.metrics_mut() = Some(metrics.0);
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+#[pyclass(extends = ResponseParts)]
+struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
+
+#[pymethods]
+impl SyncHttpResponse {
+    #[new]
+    #[args(opts = "**")]
+    pub fn new(
+        opts: Option<PyObject>,
+        py: Python<'_>,
+    ) -> PyResult<(SyncHttpResponse, ResponseParts)> {
+        let mut builder = qiniu_sdk::http::Response::builder();
+        if let Some(opts) = opts {
+            if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
+                if let Ok(status_code) = status_code.extract::<u16>() {
+                    builder
+                        .status_code(StatusCode::from_u16(status_code).map_err(|err| {
+                            QiniuInvalidStatusCodeError::new_err(err.to_string())
+                        })?);
+                }
+            }
+            if let Ok(headers) = opts.as_ref(py).get_item("headers") {
+                if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
+                    let headers = parse_headers(headers)?;
+                    builder.headers(headers);
+                }
+            }
+            if let Ok(version) = opts.as_ref(py).get_item("version") {
+                if let Ok(version) = version.extract::<Version>() {
+                    builder.version(version.into());
+                }
+            }
+            if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
+                if let Ok(server_ip) = server_ip.extract::<String>() {
+                    builder.server_ip(
+                        server_ip
+                            .parse::<IpAddr>()
+                            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?,
+                    );
+                }
+            }
+            if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
+                if let Ok(server_port) = server_port.extract::<u16>() {
+                    let server_port = parse_port(server_port)?;
+                    builder.server_port(server_port);
+                }
+            }
+            if let Ok(body) = opts.as_ref(py).get_item("body") {
+                if let Ok(body) = body.extract::<String>() {
+                    builder.body(qiniu_sdk::http::SyncResponseBody::from_bytes(
+                        body.into_bytes(),
+                    ));
+                } else if let Ok(body) = body.extract::<Vec<u8>>() {
+                    builder.body(qiniu_sdk::http::SyncResponseBody::from_bytes(body));
+                } else {
+                    builder.body(qiniu_sdk::http::SyncResponseBody::from_reader(
+                        PythonIoBase::new(body.to_object(py)),
+                    ));
+                }
+            }
+            if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
+                if let Ok(metrics) = metrics.extract::<Metrics>() {
+                    builder.metrics(metrics.0);
+                }
+            }
+        }
+        let (parts, body) = builder.build().into_parts_and_body();
+        Ok((Self(body), ResponseParts(parts)))
+    }
+}
+
+#[pyclass(extends = ResponseParts)]
+struct AsyncHttpResponse(qiniu_sdk::http::AsyncResponseBody);
+
+#[pymethods]
+impl AsyncHttpResponse {
+    #[new]
+    #[args(opts = "**")]
+    pub fn new(
+        opts: Option<PyObject>,
+        py: Python<'_>,
+    ) -> PyResult<(AsyncHttpResponse, ResponseParts)> {
+        let mut builder = qiniu_sdk::http::Response::builder();
+        if let Some(opts) = opts {
+            if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
+                if let Ok(status_code) = status_code.extract::<u16>() {
+                    builder
+                        .status_code(StatusCode::from_u16(status_code).map_err(|err| {
+                            QiniuInvalidStatusCodeError::new_err(err.to_string())
+                        })?);
+                }
+            }
+            if let Ok(headers) = opts.as_ref(py).get_item("headers") {
+                if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
+                    let headers = parse_headers(headers)?;
+                    builder.headers(headers);
+                }
+            }
+            if let Ok(version) = opts.as_ref(py).get_item("version") {
+                if let Ok(version) = version.extract::<Version>() {
+                    builder.version(version.into());
+                }
+            }
+            if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
+                if let Ok(server_ip) = server_ip.extract::<String>() {
+                    builder.server_ip(
+                        server_ip
+                            .parse::<IpAddr>()
+                            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?,
+                    );
+                }
+            }
+            if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
+                if let Ok(server_port) = server_port.extract::<u16>() {
+                    let server_port = parse_port(server_port)?;
+                    builder.server_port(server_port);
+                }
+            }
+            if let Ok(body) = opts.as_ref(py).get_item("body") {
+                if let Ok(body) = body.extract::<String>() {
+                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_bytes(
+                        body.into_bytes(),
+                    ));
+                } else if let Ok(body) = body.extract::<Vec<u8>>() {
+                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_bytes(body));
+                } else {
+                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_reader(
+                        PythonIoBase::new(body.to_object(py)).into_async_read(),
+                    ));
+                }
+            }
+            if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
+                if let Ok(metrics) = metrics.extract::<Metrics>() {
+                    builder.metrics(metrics.0);
+                }
+            }
+        }
+        let (parts, body) = builder.build().into_parts_and_body();
+        Ok((Self(body), ResponseParts(parts)))
     }
 }

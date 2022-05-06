@@ -1,10 +1,10 @@
 use super::exceptions::{
     QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
-    QiniuInvalidMethodError, QiniuInvalidURLError,
+    QiniuInvalidMethodError, QiniuInvalidPortError, QiniuInvalidURLError,
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
-use qiniu_sdk::http::{HeaderMap, HeaderName, HeaderValue, Method, Uri};
+use qiniu_sdk::http::{header::ToStrError, HeaderMap, HeaderName, HeaderValue, Method, Uri};
 use smart_default::SmartDefault;
 use std::{
     collections::HashMap,
@@ -14,6 +14,7 @@ use std::{
         Error as IoError, ErrorKind as IoErrorKind, Read, Result as IoResult, Seek, SeekFrom, Write,
     },
     net::IpAddr,
+    num::NonZeroU16,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -281,6 +282,18 @@ pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<Header
         .collect()
 }
 
+pub(super) fn convert_headers_to_hashmap(headers: &HeaderMap) -> PyResult<HashMap<String, String>> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.to_string(), value.to_string()))
+        })
+        .collect::<Result<_, ToStrError>>()
+        .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))
+}
+
 pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
     if let Some(header_value) = header_value {
         let header_value = header_value
@@ -301,6 +314,14 @@ pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
                 .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
         })
         .collect()
+}
+
+pub(super) fn parse_port(port: u16) -> PyResult<NonZeroU16> {
+    if let Some(port) = NonZeroU16::new(port) {
+        Ok(port)
+    } else {
+        Err(QiniuInvalidPortError::new_err("Invalid port"))
+    }
 }
 
 fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {
