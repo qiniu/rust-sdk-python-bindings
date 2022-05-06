@@ -82,3 +82,45 @@ class TestAsyncHttpRequest(unittest.TestCase):
         self.assertTrue(req.user_agent.endswith('/python'))
         self.assertEqual(req.resolved_ip_addrs, [
                          '127.0.0.1', '127.0.0.2'])
+
+
+class TestMetrics(unittest.TestCase):
+    def test_metrics(self):
+        metrics = http.Metrics(total_duration=1234567890)
+        self.assertEqual(metrics.total_duration, 1234567890)
+        metrics.total_duration = 9876543210
+        self.assertEqual(metrics.total_duration, 9876543210)
+
+
+class TestSyncHttpResponse(unittest.TestCase):
+    def test_new_sync_http_response(self):
+        response = http.SyncHttpResponse(status_code=200, headers={
+                                         'content-length': '1234'},
+                                         version=http.Version.HTTP_11,
+                                         body=b'hello',
+                                         server_ip='127.0.0.1',
+                                         server_port=443)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers, {'content-length': '1234'})
+        self.assertEqual(response.version, http.Version.HTTP_11)
+        self.assertEqual(response.server_ip, '127.0.0.1')
+        self.assertEqual(response.server_port, 443)
+        self.assertEqual(response.read(2), b'he')
+        self.assertEqual(response.readall(), b'llo')
+
+
+class TestAsyncHttpResponse(unittest.IsolatedAsyncioTestCase):
+    async def test_new_async_http_response(self):
+        response = http.AsyncHttpResponse(status_code=200, headers={
+            'content-length': '1234'},
+            version=http.Version.HTTP_11,
+            body=b'hello',
+            server_ip='127.0.0.1',
+            server_port=443)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers, {'content-length': '1234'})
+        self.assertEqual(response.version, http.Version.HTTP_11)
+        self.assertEqual(response.server_ip, '127.0.0.1')
+        self.assertEqual(response.server_port, 443)
+        self.assertEqual(await response.read(2), b'he')
+        self.assertEqual(await response.readall(), b'llo')

@@ -11,11 +11,17 @@ use super::{
         parse_status_code, parse_uri, PythonIoBase,
     },
 };
-use pyo3::{prelude::*, types::PyDict};
+use futures::lock::Mutex as AsyncMutex;
+use futures::AsyncReadExt;
+use pyo3::{
+    exceptions::{PyIOError, PyNotImplementedError},
+    prelude::*,
+    types::{PyBytes, PyDict},
+};
 use qiniu_sdk::http::{Method, Uri};
 use std::{
-    borrow::Cow, collections::HashMap, convert::TryInto, net::IpAddr, num::NonZeroU16,
-    time::Duration,
+    borrow::Cow, collections::HashMap, convert::TryInto, io::Read, net::IpAddr, num::NonZeroU16,
+    sync::Arc, time::Duration,
 };
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
@@ -25,6 +31,10 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<AsyncHttpRequestBuilder>()?;
     m.add_class::<AsyncHttpRequest>()?;
     m.add_class::<Version>()?;
+    m.add_class::<Metrics>()?;
+    m.add_class::<ResponseParts>()?;
+    m.add_class::<SyncHttpResponse>()?;
+    m.add_class::<AsyncHttpResponse>()?;
     Ok(m)
 }
 
@@ -457,7 +467,7 @@ impl Metrics {
 
         fn parse_duration(opts: &PyAny, item_name: &str) -> PyResult<Option<Duration>> {
             if let Ok(duration) = opts.get_item(item_name) {
-                Ok(Some(Duration::from_micros(duration.extract::<u64>()?)))
+                Ok(Some(Duration::from_nanos(duration.extract::<u64>()?)))
             } else {
                 Ok(None)
             }
@@ -466,72 +476,72 @@ impl Metrics {
 
     #[getter]
     fn get_total_duration(&self) -> Option<u128> {
-        self.0.total_duration().map(|duration| duration.as_micros())
+        self.0.total_duration().map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_total_duration(&mut self, duration: u64) {
-        *self.0.total_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.total_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     #[getter]
     fn get_name_lookup_duration(&self) -> Option<u128> {
         self.0
             .name_lookup_duration()
-            .map(|duration| duration.as_micros())
+            .map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_name_lookup_duration(&mut self, duration: u64) {
-        *self.0.name_lookup_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.name_lookup_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     #[getter]
     fn get_connect_duration(&self) -> Option<u128> {
         self.0
             .connect_duration()
-            .map(|duration| duration.as_micros())
+            .map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_connect_duration(&mut self, duration: u64) {
-        *self.0.connect_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.connect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     #[getter]
     fn get_secure_connect_duration(&self) -> Option<u128> {
         self.0
             .secure_connect_duration()
-            .map(|duration| duration.as_micros())
+            .map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_secure_connect_duration(&mut self, duration: u64) {
-        *self.0.secure_connect_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.secure_connect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     #[getter]
     fn get_redirect_duration(&self) -> Option<u128> {
         self.0
             .redirect_duration()
-            .map(|duration| duration.as_micros())
+            .map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_redirect_duration(&mut self, duration: u64) {
-        *self.0.redirect_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.redirect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     #[getter]
     fn get_transfer_duration(&self) -> Option<u128> {
         self.0
             .transfer_duration()
-            .map(|duration| duration.as_micros())
+            .map(|duration| duration.as_nanos())
     }
 
     #[setter]
     fn set_transfer_duration(&mut self, duration: u64) {
-        *self.0.transfer_duration_mut() = Some(Duration::from_micros(duration));
+        *self.0.transfer_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
     fn __repr__(&self) -> String {
@@ -632,6 +642,79 @@ impl ResponseParts {
     }
 }
 
+macro_rules! impl_response_body {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            #[getter]
+            pub fn get_closed(&self) -> bool {
+                false
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn close(&self) -> PyResult<()> {
+                Err(PyNotImplementedError::new_err("close"))
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn fileno(&self) -> PyResult<u32> {
+                Err(PyNotImplementedError::new_err("fileno"))
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn flush(&self) -> PyResult<()> {
+                Err(PyNotImplementedError::new_err("flush"))
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn isatty(&self) -> PyResult<bool> {
+                Ok(false)
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn readable(&self) -> PyResult<bool> {
+                Ok(true)
+            }
+
+            #[pyo3(text_signature = "($self, offset, whence)")]
+            #[args(whence = "0")]
+            pub fn seek(&self, offset: i64, whence: i64) -> PyResult<bool> {
+                let _offset = offset;
+                let _whence = whence;
+                Err(PyNotImplementedError::new_err("seek"))
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn seekable(&self) -> PyResult<bool> {
+                Ok(false)
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn tell(&self) -> PyResult<bool> {
+                Err(PyNotImplementedError::new_err("tell"))
+            }
+
+            #[pyo3(text_signature = "($self, size)")]
+            #[args(size = "None")]
+            pub fn truncate(&self, size: Option<u64>) -> PyResult<()> {
+                let _size = size;
+                Err(PyNotImplementedError::new_err("truncate"))
+            }
+
+            #[pyo3(text_signature = "($self)")]
+            pub fn writable(&self) -> PyResult<bool> {
+                Ok(false)
+            }
+
+            #[pyo3(text_signature = "($self, lines)")]
+            pub fn writelines(&self, lines: Vec<String>) -> PyResult<()> {
+                drop(lines);
+                Err(PyNotImplementedError::new_err("writelines"))
+            }
+        }
+    };
+}
+
 #[pyclass(extends = ResponseParts)]
 struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
 
@@ -675,10 +758,39 @@ impl SyncHttpResponse {
         let (parts, body) = builder.build().into_parts_and_body();
         Ok((Self(body), ResponseParts(parts)))
     }
+
+    #[pyo3(text_signature = "($self, size, /)")]
+    #[args(size = "-1")]
+    pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        let mut buf = Vec::new();
+        if let Ok(size) = u64::try_from(size) {
+            buf.reserve(size as usize);
+            (&mut self.0)
+                .take(size)
+                .read_to_end(&mut buf)
+                .map_err(PyIOError::new_err)?;
+        } else {
+            self.0.read_to_end(&mut buf).map_err(PyIOError::new_err)?;
+        }
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    #[pyo3(text_signature = "($self)")]
+    pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        self.read(-1, py)
+    }
+
+    #[pyo3(text_signature = "($self, b)")]
+    pub fn write(&mut self, b: PyObject) -> PyResult<u64> {
+        drop(b);
+        Err(PyNotImplementedError::new_err("write"))
+    }
 }
 
+impl_response_body!(SyncHttpResponse);
+
 #[pyclass(extends = ResponseParts)]
-struct AsyncHttpResponse(qiniu_sdk::http::AsyncResponseBody);
+struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
 
 #[pymethods]
 impl AsyncHttpResponse {
@@ -718,6 +830,37 @@ impl AsyncHttpResponse {
             }
         }
         let (parts, body) = builder.build().into_parts_and_body();
-        Ok((Self(body), ResponseParts(parts)))
+        Ok((Self(Arc::new(AsyncMutex::new(body))), ResponseParts(parts)))
+    }
+
+    #[pyo3(text_signature = "($self, size, /)")]
+    #[args(size = "-1")]
+    pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut *reader).take(size).read_to_end(&mut buf).await
+            } else {
+                reader.read_to_end(&mut buf).await
+            }
+            .map_err(PyIOError::new_err)?;
+            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
+        })
+    }
+
+    #[pyo3(text_signature = "($self)")]
+    pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        self.read(-1, py)
+    }
+
+    #[pyo3(text_signature = "($self, b)")]
+    pub fn write(&mut self, b: PyObject) -> PyResult<u64> {
+        drop(b);
+        Err(PyNotImplementedError::new_err("write"))
     }
 }
+
+impl_response_body!(AsyncHttpResponse);
