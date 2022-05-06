@@ -1,15 +1,18 @@
 use super::{
     exceptions::{
         QiniuBodySizeMissingError, QiniuInvalidHttpVersionError, QiniuInvalidIpAddrError,
-        QiniuInvalidMethodError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
+        QiniuInvalidMethodError, QiniuInvalidURLError,
     },
     utils::{
-        convert_headers_to_hashmap, parse_headers, parse_ip_addrs, parse_method, parse_port,
-        parse_uri, PythonIoBase,
+        convert_headers_to_hashmap, extract_async_request_body, extract_async_response_body,
+        extract_headers, extract_ip_addr, extract_ip_addrs, extract_method, extract_metrics,
+        extract_port, extract_status_code, extract_sync_request_body, extract_sync_response_body,
+        extract_uri, extract_version, parse_headers, parse_ip_addrs, parse_method,
+        parse_status_code, parse_uri, PythonIoBase,
     },
 };
 use pyo3::{prelude::*, types::PyDict};
-use qiniu_sdk::http::{Method, StatusCode, Uri};
+use qiniu_sdk::http::{Method, Uri};
 use std::{
     borrow::Cow, collections::HashMap, convert::TryInto, net::IpAddr, num::NonZeroU16,
     time::Duration,
@@ -271,61 +274,40 @@ impl SyncHttpRequest {
 
 impl SyncHttpRequest {
     fn set_builder_from_py_dict(
-        builder: &mut qiniu_sdk::http::SyncRequestBuilder,
+        builder: &mut qiniu_sdk::http::SyncRequestBuilder<'static>,
         fields: &PyDict,
         py: Python<'_>,
     ) -> PyResult<()> {
         if let Some(url) = fields.get_item("url") {
-            if let Ok(url) = url.extract::<&str>() {
-                let url = parse_uri(url)?;
-                builder.url(url);
-            }
+            let url = extract_uri(url)?;
+            builder.url(url);
         }
         if let Some(method) = fields.get_item("method") {
-            if let Ok(method) = method.extract::<&str>() {
-                let method = parse_method(method)?;
-                builder.method(method);
-            }
+            let method = extract_method(method)?;
+            builder.method(method);
         }
         if let Some(version) = fields.get_item("version") {
-            if let Ok(version) = version.extract::<Version>() {
-                builder.version(version.try_into()?);
-            }
+            let version = extract_version(version)?;
+            builder.version(version);
         }
         if let Some(headers) = fields.get_item("headers") {
-            if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
-                let headers = parse_headers(headers)?;
-                builder.headers(headers);
-            }
+            let headers = extract_headers(headers)?;
+            builder.headers(headers);
         }
         if let Some(appended_user_agent) = fields.get_item("appended_user_agent") {
-            if let Ok(appended_user_agent) = appended_user_agent.extract::<&str>() {
-                builder.appended_user_agent(appended_user_agent);
-            }
+            builder.appended_user_agent(appended_user_agent.extract::<&str>()?);
         }
         if let Some(resolved_ip_addrs) = fields.get_item("resolved_ip_addrs") {
-            if let Ok(resolved_ip_addrs) = resolved_ip_addrs.extract::<Vec<String>>() {
-                let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
-                builder.resolved_ip_addrs(resolved_ip_addrs);
-            }
+            let resolved_ip_addrs = extract_ip_addrs(resolved_ip_addrs)?;
+            builder.resolved_ip_addrs(resolved_ip_addrs);
         }
         if let Some(body) = fields.get_item("body") {
-            if let Ok(body) = body.extract::<String>() {
-                builder.body(qiniu_sdk::http::SyncRequestBody::from(body));
-            } else if let Ok(body) = body.extract::<Vec<u8>>() {
-                builder.body(qiniu_sdk::http::SyncRequestBody::from(body));
-            } else if let Some(body_len) = fields.get_item("body_len") {
-                if let Ok(body_len) = body_len.extract::<u64>() {
-                    builder.body(qiniu_sdk::http::SyncRequestBody::from_reader(
-                        PythonIoBase::new(body.into_py(py)),
-                        body_len,
-                    ));
-                } else {
-                    return Err(QiniuBodySizeMissingError::new_err("`body` must be passed"));
-                }
-            } else {
-                return Err(QiniuBodySizeMissingError::new_err("`body` must be passed"));
-            }
+            let body = extract_sync_request_body(
+                body.to_object(py),
+                fields.get_item("body_len").map(|f| f.to_object(py)),
+                py,
+            )?;
+            builder.body(body);
         }
         Ok(())
     }
@@ -361,61 +343,40 @@ impl AsyncHttpRequest {
 
 impl AsyncHttpRequest {
     fn set_builder_from_py_dict(
-        builder: &mut qiniu_sdk::http::AsyncRequestBuilder,
+        builder: &mut qiniu_sdk::http::AsyncRequestBuilder<'static>,
         fields: &PyDict,
         py: Python<'_>,
     ) -> PyResult<()> {
         if let Some(url) = fields.get_item("url") {
-            if let Ok(url) = url.extract::<&str>() {
-                let url = parse_uri(url)?;
-                builder.url(url);
-            }
+            let url = extract_uri(url)?;
+            builder.url(url);
         }
         if let Some(method) = fields.get_item("method") {
-            if let Ok(method) = method.extract::<&str>() {
-                let method = parse_method(method)?;
-                builder.method(method);
-            }
+            let method = extract_method(method)?;
+            builder.method(method);
         }
         if let Some(version) = fields.get_item("version") {
-            if let Ok(version) = version.extract::<Version>() {
-                builder.version(version.try_into()?);
-            }
+            let version = extract_version(version)?;
+            builder.version(version);
         }
         if let Some(headers) = fields.get_item("headers") {
-            if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
-                let headers = parse_headers(headers)?;
-                builder.headers(headers);
-            }
+            let headers = extract_headers(headers)?;
+            builder.headers(headers);
         }
         if let Some(appended_user_agent) = fields.get_item("appended_user_agent") {
-            if let Ok(appended_user_agent) = appended_user_agent.extract::<&str>() {
-                builder.appended_user_agent(appended_user_agent);
-            }
+            builder.appended_user_agent(appended_user_agent.extract::<&str>()?);
         }
         if let Some(resolved_ip_addrs) = fields.get_item("resolved_ip_addrs") {
-            if let Ok(resolved_ip_addrs) = resolved_ip_addrs.extract::<Vec<String>>() {
-                let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
-                builder.resolved_ip_addrs(resolved_ip_addrs);
-            }
+            let resolved_ip_addrs = extract_ip_addrs(resolved_ip_addrs)?;
+            builder.resolved_ip_addrs(resolved_ip_addrs);
         }
         if let Some(body) = fields.get_item("body") {
-            if let Ok(body) = body.extract::<String>() {
-                builder.body(qiniu_sdk::http::AsyncRequestBody::from(body));
-            } else if let Ok(body) = body.extract::<Vec<u8>>() {
-                builder.body(qiniu_sdk::http::AsyncRequestBody::from(body));
-            } else if let Some(body_len) = fields.get_item("body_len") {
-                if let Ok(body_len) = body_len.extract::<u64>() {
-                    builder.body(qiniu_sdk::http::AsyncRequestBody::from_reader(
-                        PythonIoBase::new(body.into_py(py)).into_async_read(),
-                        body_len,
-                    ));
-                } else {
-                    return Err(QiniuBodySizeMissingError::new_err("`body` must be passed"));
-                }
-            } else {
-                return Err(QiniuBodySizeMissingError::new_err("`body` must be passed"));
-            }
+            let body = extract_async_request_body(
+                body.to_object(py),
+                fields.get_item("body_len").map(|f| f.to_object(py)),
+                py,
+            )?;
+            builder.body(body);
         }
         Ok(())
     }
@@ -424,7 +385,7 @@ impl AsyncHttpRequest {
 #[pyclass]
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
-enum Version {
+pub(super) enum Version {
     HTTP_09 = 9,
     HTTP_10 = 10,
     HTTP_11 = 11,
@@ -464,43 +425,42 @@ impl From<Version> for qiniu_sdk::http::Version {
 
 #[pyclass]
 #[derive(Clone)]
-struct Metrics(qiniu_sdk::http::Metrics);
+pub(super) struct Metrics(qiniu_sdk::http::Metrics);
 
 #[pymethods]
 impl Metrics {
     #[new]
     #[args(opts = "**")]
-    fn new(opts: Option<PyObject>, py: Python<'_>) -> Self {
+    fn new(opts: Option<PyObject>, py: Python<'_>) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::MetricsBuilder::default();
         if let Some(opts) = opts {
-            if let Some(duration) = parse_duration(opts.as_ref(py), "total_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "total_duration")? {
                 builder.total_duration(duration);
             }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "name_lookup_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "name_lookup_duration")? {
                 builder.name_lookup_duration(duration);
             }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "connect_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "connect_duration")? {
                 builder.connect_duration(duration);
             }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "secure_connect_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "secure_connect_duration")? {
                 builder.secure_connect_duration(duration);
             }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "redirect_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "redirect_duration")? {
                 builder.redirect_duration(duration);
             }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "transfer_duration") {
+            if let Some(duration) = parse_duration(opts.as_ref(py), "transfer_duration")? {
                 builder.transfer_duration(duration);
             }
         }
-        return Self(builder.build());
+        return Ok(Self(builder.build()));
 
-        fn parse_duration(opts: &PyAny, item_name: &str) -> Option<Duration> {
+        fn parse_duration(opts: &PyAny, item_name: &str) -> PyResult<Option<Duration>> {
             if let Ok(duration) = opts.get_item(item_name) {
-                if let Ok(micros) = duration.extract::<u64>() {
-                    return Some(Duration::from_micros(micros));
-                }
+                Ok(Some(Duration::from_micros(duration.extract::<u64>()?)))
+            } else {
+                Ok(None)
             }
-            None
         }
     }
 
@@ -583,6 +543,12 @@ impl Metrics {
     }
 }
 
+impl Metrics {
+    pub(super) fn into_inner(self) -> qiniu_sdk::http::Metrics {
+        self.0
+    }
+}
+
 #[pyclass(subclass)]
 struct ResponseParts(qiniu_sdk::http::ResponseParts);
 
@@ -595,8 +561,7 @@ impl ResponseParts {
 
     #[setter]
     fn set_status_code(&mut self, status_code: u16) -> PyResult<()> {
-        *self.0.status_code_mut() = StatusCode::from_u16(status_code)
-            .map_err(|err| QiniuInvalidStatusCodeError::new_err(err.to_string()))?;
+        *self.0.status_code_mut() = parse_status_code(status_code)?;
         Ok(())
     }
 
@@ -681,56 +646,30 @@ impl SyncHttpResponse {
         let mut builder = qiniu_sdk::http::Response::builder();
         if let Some(opts) = opts {
             if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
-                if let Ok(status_code) = status_code.extract::<u16>() {
-                    builder
-                        .status_code(StatusCode::from_u16(status_code).map_err(|err| {
-                            QiniuInvalidStatusCodeError::new_err(err.to_string())
-                        })?);
-                }
+                let status_code = extract_status_code(status_code)?;
+                builder.status_code(status_code);
             }
             if let Ok(headers) = opts.as_ref(py).get_item("headers") {
-                if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
-                    let headers = parse_headers(headers)?;
-                    builder.headers(headers);
-                }
+                let headers = extract_headers(headers)?;
+                builder.headers(headers);
             }
             if let Ok(version) = opts.as_ref(py).get_item("version") {
-                if let Ok(version) = version.extract::<Version>() {
-                    builder.version(version.into());
-                }
+                let version = extract_version(version)?;
+                builder.version(version);
             }
             if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
-                if let Ok(server_ip) = server_ip.extract::<String>() {
-                    builder.server_ip(
-                        server_ip
-                            .parse::<IpAddr>()
-                            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?,
-                    );
-                }
+                let server_ip = extract_ip_addr(server_ip)?;
+                builder.server_ip(server_ip);
             }
             if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
-                if let Ok(server_port) = server_port.extract::<u16>() {
-                    let server_port = parse_port(server_port)?;
-                    builder.server_port(server_port);
-                }
+                let server_port = extract_port(server_port)?;
+                builder.server_port(server_port);
             }
             if let Ok(body) = opts.as_ref(py).get_item("body") {
-                if let Ok(body) = body.extract::<String>() {
-                    builder.body(qiniu_sdk::http::SyncResponseBody::from_bytes(
-                        body.into_bytes(),
-                    ));
-                } else if let Ok(body) = body.extract::<Vec<u8>>() {
-                    builder.body(qiniu_sdk::http::SyncResponseBody::from_bytes(body));
-                } else {
-                    builder.body(qiniu_sdk::http::SyncResponseBody::from_reader(
-                        PythonIoBase::new(body.to_object(py)),
-                    ));
-                }
+                builder.body(extract_sync_response_body(body.to_object(py), py));
             }
             if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
-                if let Ok(metrics) = metrics.extract::<Metrics>() {
-                    builder.metrics(metrics.0);
-                }
+                builder.metrics(extract_metrics(metrics)?);
             }
         }
         let (parts, body) = builder.build().into_parts_and_body();
@@ -752,56 +691,30 @@ impl AsyncHttpResponse {
         let mut builder = qiniu_sdk::http::Response::builder();
         if let Some(opts) = opts {
             if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
-                if let Ok(status_code) = status_code.extract::<u16>() {
-                    builder
-                        .status_code(StatusCode::from_u16(status_code).map_err(|err| {
-                            QiniuInvalidStatusCodeError::new_err(err.to_string())
-                        })?);
-                }
+                let status_code = extract_status_code(status_code)?;
+                builder.status_code(status_code);
             }
             if let Ok(headers) = opts.as_ref(py).get_item("headers") {
-                if let Ok(headers) = headers.extract::<HashMap<String, String>>() {
-                    let headers = parse_headers(headers)?;
-                    builder.headers(headers);
-                }
+                let headers = extract_headers(headers)?;
+                builder.headers(headers);
             }
             if let Ok(version) = opts.as_ref(py).get_item("version") {
-                if let Ok(version) = version.extract::<Version>() {
-                    builder.version(version.into());
-                }
+                let version = extract_version(version)?;
+                builder.version(version);
             }
             if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
-                if let Ok(server_ip) = server_ip.extract::<String>() {
-                    builder.server_ip(
-                        server_ip
-                            .parse::<IpAddr>()
-                            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?,
-                    );
-                }
+                let server_ip = extract_ip_addr(server_ip)?;
+                builder.server_ip(server_ip);
             }
             if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
-                if let Ok(server_port) = server_port.extract::<u16>() {
-                    let server_port = parse_port(server_port)?;
-                    builder.server_port(server_port);
-                }
+                let server_port = extract_port(server_port)?;
+                builder.server_port(server_port);
             }
             if let Ok(body) = opts.as_ref(py).get_item("body") {
-                if let Ok(body) = body.extract::<String>() {
-                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_bytes(
-                        body.into_bytes(),
-                    ));
-                } else if let Ok(body) = body.extract::<Vec<u8>>() {
-                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_bytes(body));
-                } else {
-                    builder.body(qiniu_sdk::http::AsyncResponseBody::from_reader(
-                        PythonIoBase::new(body.to_object(py)).into_async_read(),
-                    ));
-                }
+                builder.body(extract_async_response_body(body.to_object(py), py));
             }
             if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
-                if let Ok(metrics) = metrics.extract::<Metrics>() {
-                    builder.metrics(metrics.0);
-                }
+                builder.metrics(extract_metrics(metrics)?);
             }
         }
         let (parts, body) = builder.build().into_parts_and_body();

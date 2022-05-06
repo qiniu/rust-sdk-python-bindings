@@ -1,10 +1,14 @@
 use super::exceptions::{
-    QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
-    QiniuInvalidMethodError, QiniuInvalidPortError, QiniuInvalidURLError,
+    QiniuBodySizeMissingError, QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError,
+    QiniuInvalidIpAddrError, QiniuInvalidMethodError, QiniuInvalidPortError,
+    QiniuInvalidStatusCodeError, QiniuInvalidURLError,
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
-use qiniu_sdk::http::{header::ToStrError, HeaderMap, HeaderName, HeaderValue, Method, Uri};
+use qiniu_sdk::http::{
+    header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName, HeaderValue,
+    Method, Metrics, StatusCode, SyncRequestBody, SyncResponseBody, Uri, Version,
+};
 use smart_default::SmartDefault;
 use std::{
     collections::HashMap,
@@ -253,6 +257,10 @@ fn make_io_error_from_py_err(err: PyErr) -> IoError {
     IoError::new(IoErrorKind::Other, err)
 }
 
+pub(super) fn extract_uri(url: &PyAny) -> PyResult<Uri> {
+    parse_uri(url.extract::<&str>()?)
+}
+
 pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
     let url = url
         .parse::<Uri>()
@@ -260,11 +268,23 @@ pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
     Ok(url)
 }
 
+pub(super) fn extract_method(method: &PyAny) -> PyResult<Method> {
+    parse_method(method.extract::<&str>()?)
+}
+
 pub(super) fn parse_method(method: &str) -> PyResult<Method> {
     let method = method
         .parse::<Method>()
         .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
     Ok(method)
+}
+
+pub(super) fn extract_version(version: &PyAny) -> PyResult<Version> {
+    Ok(version.extract::<super::http::Version>()?.into())
+}
+
+pub(super) fn extract_headers(headers: &PyAny) -> PyResult<HeaderMap> {
+    parse_headers(headers.extract::<HashMap<String, String>>()?)
 }
 
 pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
@@ -305,6 +325,10 @@ pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<
     }
 }
 
+pub(super) fn extract_ip_addrs(ip_addrs: &PyAny) -> PyResult<Vec<IpAddr>> {
+    parse_ip_addrs(ip_addrs.extract::<Vec<String>>()?)
+}
+
 pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
     ip_addrs
         .into_iter()
@@ -316,12 +340,99 @@ pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
         .collect()
 }
 
+pub(super) fn extract_port(port: &PyAny) -> PyResult<NonZeroU16> {
+    parse_port(port.extract::<u16>()?)
+}
+
 pub(super) fn parse_port(port: u16) -> PyResult<NonZeroU16> {
     if let Some(port) = NonZeroU16::new(port) {
         Ok(port)
     } else {
         Err(QiniuInvalidPortError::new_err("Invalid port"))
     }
+}
+
+pub(super) fn extract_sync_request_body(
+    body: PyObject,
+    body_len: Option<PyObject>,
+    py: Python<'_>,
+) -> PyResult<SyncRequestBody<'static>> {
+    if let Ok(body) = body.extract::<String>(py) {
+        Ok(SyncRequestBody::from(body))
+    } else if let Ok(body) = body.extract::<Vec<u8>>(py) {
+        Ok(SyncRequestBody::from(body))
+    } else if let Some(body_len) = body_len {
+        Ok(SyncRequestBody::from_reader(
+            PythonIoBase::new(body),
+            body_len.extract::<u64>(py)?,
+        ))
+    } else {
+        Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
+    }
+}
+
+pub(super) fn extract_async_request_body(
+    body: PyObject,
+    body_len: Option<PyObject>,
+    py: Python<'_>,
+) -> PyResult<AsyncRequestBody<'static>> {
+    if let Ok(body) = body.extract::<String>(py) {
+        Ok(AsyncRequestBody::from(body))
+    } else if let Ok(body) = body.extract::<Vec<u8>>(py) {
+        Ok(AsyncRequestBody::from(body))
+    } else if let Some(body_len) = body_len {
+        Ok(AsyncRequestBody::from_reader(
+            PythonIoBase::new(body).into_async_read(),
+            body_len.extract::<u64>(py)?,
+        ))
+    } else {
+        Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
+    }
+}
+
+pub(super) fn extract_sync_response_body(body: PyObject, py: Python<'_>) -> SyncResponseBody {
+    if let Ok(body) = body.extract::<String>(py) {
+        SyncResponseBody::from_bytes(body.into_bytes())
+    } else if let Ok(body) = body.extract::<Vec<u8>>(py) {
+        SyncResponseBody::from_bytes(body)
+    } else {
+        SyncResponseBody::from_reader(PythonIoBase::new(body))
+    }
+}
+
+pub(super) fn extract_async_response_body(body: PyObject, py: Python<'_>) -> AsyncResponseBody {
+    if let Ok(body) = body.extract::<String>(py) {
+        AsyncResponseBody::from_bytes(body.into_bytes())
+    } else if let Ok(body) = body.extract::<Vec<u8>>(py) {
+        AsyncResponseBody::from_bytes(body)
+    } else {
+        AsyncResponseBody::from_reader(PythonIoBase::new(body).into_async_read())
+    }
+}
+
+pub(super) fn extract_status_code(status_code: &PyAny) -> PyResult<StatusCode> {
+    parse_status_code(status_code.extract::<u16>()?)
+}
+
+pub(super) fn parse_status_code(status_code: u16) -> PyResult<StatusCode> {
+    StatusCode::from_u16(status_code)
+        .map_err(|err| QiniuInvalidStatusCodeError::new_err(err.to_string()))
+}
+
+pub(super) fn extract_ip_addr(ip_addr: &PyAny) -> PyResult<IpAddr> {
+    parse_ip_addr(ip_addr.extract::<&str>()?)
+}
+
+pub(super) fn parse_ip_addr(ip_addr: &str) -> PyResult<IpAddr> {
+    ip_addr
+        .parse::<IpAddr>()
+        .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
+}
+
+pub(super) fn extract_metrics(metrics: &PyAny) -> PyResult<Metrics> {
+    metrics
+        .extract::<super::http::Metrics>()
+        .map(|m| m.into_inner())
 }
 
 fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {

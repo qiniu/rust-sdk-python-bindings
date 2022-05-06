@@ -590,12 +590,6 @@ impl UploadTokenProvider {
     }
 }
 
-impl UploadTokenProvider {
-    pub(super) fn into_inner(self) -> Box<dyn qiniu_sdk::upload_token::UploadTokenProvider> {
-        self.0
-    }
-}
-
 fn convert_parse_error_to_py_err(err: ParseError) -> PyErr {
     match err {
         ParseError::CredentialGetError(err) => QiniuIoError::new_err(err),
