@@ -1,11 +1,16 @@
 use pyo3::{
     create_exception,
-    exceptions::{PyException, PyIOError, PyTypeError, PyValueError},
+    exceptions::{PyException, PyIOError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
 };
 
 pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add("QiniuCallbackError", py.get_type::<QiniuCallbackError>())?;
+    m.add(
+        "QiniuDataLockedError",
+        py.get_type::<QiniuDataLockedError>(),
+    )?;
+    m.add("QiniuIsahcError", py.get_type::<QiniuIsahcError>())?;
     m.add("QiniuUnknownError", py.get_type::<QiniuUnknownError>())?;
     m.add(
         "QiniuInvalidURLError",
@@ -55,6 +60,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuUnsupportedTypeError>(),
     )?;
     m.add("QiniuIoError", py.get_type::<QiniuIoError>())?;
+    m.add("QiniuHttpCallError", py.get_type::<QiniuHttpCallError>())?;
     m.add(
         "QiniuBodySizeMissingError",
         py.get_type::<QiniuBodySizeMissingError>(),
@@ -62,7 +68,9 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
-create_exception!(qiniu_sdk_bindings, QiniuCallbackError, PyException);
+create_exception!(qiniu_sdk_bindings, QiniuCallbackError, PyRuntimeError);
+create_exception!(qiniu_sdk_bindings, QiniuDataLockedError, PyRuntimeError);
+create_exception!(qiniu_sdk_bindings, QiniuIsahcError, PyRuntimeError);
 create_exception!(qiniu_sdk_bindings, QiniuUnknownError, PyException);
 create_exception!(qiniu_sdk_bindings, QiniuInvalidURLError, PyValueError);
 create_exception!(
@@ -104,3 +112,4 @@ create_exception!(
 );
 create_exception!(qiniu_sdk_bindings, QiniuUnsupportedTypeError, PyValueError);
 create_exception!(qiniu_sdk_bindings, QiniuIoError, PyIOError);
+create_exception!(qiniu_sdk_bindings, QiniuHttpCallError, PyIOError);

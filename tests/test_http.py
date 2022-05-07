@@ -124,3 +124,25 @@ class TestAsyncHttpResponse(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.server_port, 443)
         self.assertEqual(await response.read(2), b'he')
         self.assertEqual(await response.readall(), b'llo')
+
+
+class TestSyncIsahcHttpCaller(unittest.TestCase):
+    def test_sync_isahc_http_caller(self):
+        req = http.SyncHttpRequest(
+            url='https://www.qiniu.com/robots.txt', method='GET')
+        resp = http.IsahcHttpCaller().call(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['content-type'], 'text/plain')
+        self.assertEqual(resp.server_port, 443)
+        self.assertTrue(b'Disallow: /' in resp.readall())
+
+
+class TestAsyncIsahcHttpCaller(unittest.IsolatedAsyncioTestCase):
+    async def test_async_isahc_http_caller(self):
+        req = http.AsyncHttpRequest(
+            url='https://www.qiniu.com/robots.txt', method='GET')
+        resp = await http.IsahcHttpCaller().async_call(req)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers['content-type'], 'text/plain')
+        self.assertEqual(resp.server_port, 443)
+        self.assertTrue(b'Disallow: /' in await resp.readall())
