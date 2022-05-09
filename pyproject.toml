@@ -29,8 +29,9 @@ classifiers = [
 dependencies = [
     "maturin>=0.12,<0.13"
 ]
-[project.opiontal-dependencies]
+[project.optional-dependencies]
 tests = [
+    "Sphinx>=4.0.0,<5.0.0",
     "aiofiles>=0.8.0,<0.9.0",
     "aiohttp>=3.0.0,<4.0.0"
 ]

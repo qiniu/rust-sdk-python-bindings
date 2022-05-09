@@ -34,4 +34,4 @@ jobs:
       - name: Test
         run: |
           export PYO3_PYTHON="$(which python)"
-          make initialize test
+          make initialize docs test

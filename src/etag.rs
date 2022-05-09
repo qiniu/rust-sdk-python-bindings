@@ -17,8 +17,10 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 }
 
 macro_rules! define_etag_struct {
-    ($name:ident, $rust_struct:ty) => {
+    ($name:ident, $rust_struct:ty, $docs:expr, $signature:expr) => {
         #[pyclass]
+        #[doc = $docs]
+        #[pyo3(text_signature = $signature)]
         struct $name($rust_struct);
 
         #[pymethods]
@@ -31,17 +33,20 @@ macro_rules! define_etag_struct {
                 self.__repr__()
             }
 
+            /// 写入数据到 Etag 计算器
             #[pyo3(text_signature = "($self, data)")]
             fn write(&mut self, data: Vec<u8>) -> usize {
                 self.0.update(&data);
                 data.len()
             }
 
+            /// 重置 Etag 计算器
             #[pyo3(text_signature = "($self)")]
             fn reset(&mut self) {
                 self.0.reset();
             }
 
+            /// 获取 Etag 计算结果，并且重置计算器
             #[pyo3(text_signature = "($self)")]
             fn finalize(&mut self) -> String {
                 let mut buf =
@@ -53,40 +58,51 @@ macro_rules! define_etag_struct {
     };
 }
 
-define_etag_struct!(EtagV1, qiniu_sdk::etag::EtagV1);
+define_etag_struct!(EtagV1, qiniu_sdk::etag::EtagV1, "Etag V1 计算器", "()");
 
 #[pymethods]
 impl EtagV1 {
+    /// 创建 Etag V1 计算器
     #[new]
     fn new() -> Self {
         Self(qiniu_sdk::etag::EtagV1::new())
     }
 }
 
-define_etag_struct!(EtagV2, qiniu_sdk::etag::EtagV2);
+define_etag_struct!(EtagV2, qiniu_sdk::etag::EtagV2, "Etag V2 计算器", "()");
 
 #[pymethods]
 impl EtagV2 {
+    /// 创建 Etag V2 计算器
     #[new]
     fn new() -> Self {
         Self(qiniu_sdk::etag::EtagV2::new())
     }
 }
 
-define_etag_struct!(Etag, qiniu_sdk::etag::Etag);
+define_etag_struct!(
+    Etag,
+    qiniu_sdk::etag::Etag,
+    "兼容 Etag 兼容计算器，可以为不同版本的 Etag 提供相同的接口",
+    "(version)"
+);
 
 #[pymethods]
 impl Etag {
+    /// 创建 Etag 兼容计算器
     #[new]
     fn new(version: EtagVersion) -> Self {
         Self(qiniu_sdk::etag::Etag::new(version.into()))
     }
 }
 
+/// Etag 版本
 #[pyclass]
 #[derive(Debug, Copy, Clone)]
 enum EtagVersion {
+    /// Etag V1
     V1 = 1,
+    /// Etag V2
     V2 = 2,
 }
 
@@ -99,6 +115,7 @@ impl From<EtagVersion> for qiniu_sdk::etag::EtagVersion {
     }
 }
 
+/// 读取 reader 中的数据并计算它的 Etag V1，生成结果
 #[pyfunction]
 #[pyo3(text_signature = "(io_base)")]
 fn etag_of(io_base: PyObject) -> PyResult<String> {
@@ -106,6 +123,7 @@ fn etag_of(io_base: PyObject) -> PyResult<String> {
     Ok(etag)
 }
 
+/// 根据给出的数据块尺寸，读取 reader 中的数据并计算它的 Etag V2，生成结果
 #[pyfunction]
 #[pyo3(text_signature = "(io_base, parts)")]
 fn etag_with_parts(io_base: PyObject, parts: Vec<usize>) -> PyResult<String> {
@@ -113,6 +131,7 @@ fn etag_with_parts(io_base: PyObject, parts: Vec<usize>) -> PyResult<String> {
     Ok(etag)
 }
 
+/// 异步读取 reader 中的数据并计算它的 Etag V1，生成结果
 #[pyfunction]
 #[pyo3(text_signature = "(io_base)")]
 fn async_etag_of(io_base: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
@@ -123,6 +142,7 @@ fn async_etag_of(io_base: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
     })
 }
 
+/// 根据给出的数据块尺寸，异步读取 reader 中的数据并计算它的 Etag V2，生成结果
 #[pyfunction]
 #[pyo3(text_signature = "(io_base, parts)")]
 fn async_etag_with_parts(io_base: PyObject, parts: Vec<usize>, py: Python<'_>) -> PyResult<&PyAny> {

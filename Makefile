@@ -1,4 +1,4 @@
-.PHONY: build initialize console test clippy clean
+.PHONY: build initialize console test clippy docs clean
 
 all: build
 build:
@@ -11,7 +11,7 @@ initialize:
 	${PYO3_PYTHON} -m venv .env; \
 	. .env/bin/activate; \
 	.env/bin/python -m pip install pip --upgrade; \
-	.env/bin/python -m pip install .; \
+	.env/bin/python -m pip install ".[tests]"; \
 	maturin develop
 test:
 	set -e; \
@@ -24,6 +24,8 @@ console:
 	.env/bin/python
 clippy:
 	cargo clippy
+docs: build
+	$(MAKE) -C docs html
 clean:
 	cargo clean
 	rm -rf .env

@@ -3,10 +3,13 @@ use super::{
     utils::{parse_header_value, parse_headers, parse_method, parse_uri, PythonIoBase},
 };
 use pyo3::prelude::*;
+use qiniu_sdk::credential::{QINIU_ACCESS_KEY_ENV_KEY, QINIU_SECRET_KEY_ENV_KEY};
 use std::{collections::HashMap, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "credential")?;
+    m.add("QINIU_ACCESS_KEY_ENV_KEY", QINIU_ACCESS_KEY_ENV_KEY)?;
+    m.add("QINIU_SECRET_KEY_ENV_KEY", QINIU_SECRET_KEY_ENV_KEY)?;
     m.add_class::<Credential>()?;
     m.add_class::<CredentialProvider>()?;
     m.add_class::<GlobalCredentialProvider>()?;
@@ -16,12 +19,15 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     Ok(m)
 }
 
+/// 认证信息
 #[pyclass(extends = CredentialProvider)]
 #[derive(Debug, Clone)]
+#[pyo3(text_signature = "(access_key, secret_key)")]
 struct Credential;
 
 #[pymethods]
 impl Credential {
+    /// 创建认证信息
     #[new]
     fn new(access_key: String, secret_key: String) -> (Self, CredentialProvider) {
         (
@@ -41,24 +47,32 @@ impl Credential {
         Self::__repr__(self_)
     }
 
+    /// 获取认证信息的 AccessKey
     #[pyo3(text_signature = "($self)")]
     fn access_key(self_: PyRef<'_, Self>) -> PyResult<String> {
         let super_ = self_.as_ref();
         Ok(super_.0.get(Default::default())?.access_key().to_string())
     }
 
+    /// 获取认证信息的 SecretKey
     #[pyo3(text_signature = "($self)")]
     fn secret_key(self_: PyRef<'_, Self>) -> PyResult<String> {
         let super_ = self_.as_ref();
         Ok(super_.0.get(Default::default())?.secret_key().to_string())
     }
 
+    /// 使用七牛签名算法对数据进行签名
+    ///
+    /// 参考 https://developer.qiniu.com/kodo/manual/1201/access-token
     #[pyo3(text_signature = "($self, data)")]
     fn sign(self_: PyRef<'_, Self>, data: Vec<u8>) -> PyResult<String> {
         let super_ = self_.as_ref();
         Ok(super_.0.get(Default::default())?.sign(&data))
     }
 
+    /// 使用七牛签名算法对输入流数据进行签名
+    ///
+    /// 参考 https://developer.qiniu.com/kodo/manual/1201/access-token
     #[pyo3(text_signature = "($self, io_base)")]
     fn sign_reader(self_: PyRef<'_, Self>, io_base: PyObject) -> PyResult<String> {
         let super_ = self_.as_ref();
@@ -69,6 +83,9 @@ impl Credential {
         Ok(signature)
     }
 
+    /// 使用七牛签名算法对异步输入流数据进行签名
+    ///
+    /// 参考 https://developer.qiniu.com/kodo/manual/1201/access-token
     #[pyo3(text_signature = "($self, io_base)")]
     fn sign_async_reader<'p>(
         self_: PyRef<'p, Self>,
@@ -87,6 +104,7 @@ impl Credential {
         })
     }
 
+    /// 对对象的下载 URL 签名，可以生成私有存储空间的下载地址
     #[pyo3(text_signature = "($self, url, secs)")]
     fn sign_download_url(self_: PyRef<'_, Self>, url: &str, secs: u64) -> PyResult<String> {
         let super_ = self_.as_ref();
@@ -97,6 +115,7 @@ impl Credential {
             .to_string())
     }
 
+    /// 使用七牛签名算法 V1 对 HTTP 请求（请求体为内存数据）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, url, content_type, body)")]
     fn authorization_v1_for_request(
         self_: PyRef<'_, Self>,
@@ -113,6 +132,7 @@ impl Credential {
             .authorization_v1_for_request(&url, content_type.as_ref(), body))
     }
 
+    /// 使用七牛签名算法 V1 对 HTTP 请求（请求体为输入流）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, url, content_type, body)")]
     fn authorization_v1_for_request_with_body_reader(
         self_: PyRef<'_, Self>,
@@ -134,6 +154,7 @@ impl Credential {
         Ok(auth)
     }
 
+    /// 使用七牛签名算法 V1 对 HTTP 请求（请求体为异步输入流）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, url, content_type, body)")]
     fn authorization_v1_for_request_with_async_body_reader<'p>(
         self_: PyRef<'_, Self>,
@@ -160,6 +181,7 @@ impl Credential {
         })
     }
 
+    /// 使用七牛签名算法 V2 对 HTTP 请求（请求体为内存数据）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, method, url, headers, body)")]
     fn authorization_v2_for_request(
         self_: PyRef<'_, Self>,
@@ -178,6 +200,7 @@ impl Credential {
             .authorization_v2_for_request(&method, &url, &headers, body))
     }
 
+    /// 使用七牛签名算法 V2 对 HTTP 请求（请求体为输入流）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, method, url, headers, body)")]
     fn authorization_v2_for_request_with_body_reader(
         self_: PyRef<'_, Self>,
@@ -202,6 +225,7 @@ impl Credential {
         Ok(auth)
     }
 
+    /// 使用七牛签名算法 V2 对 HTTP 请求（请求体为异步输入流）进行签名，返回 Authorization 的值
     #[pyo3(text_signature = "($self, method, url, headers, body)")]
     fn authorization_v2_for_request_with_async_body_reader<'p>(
         self_: PyRef<'_, Self>,
@@ -232,35 +256,44 @@ impl Credential {
     }
 }
 
+/// 认证信息获取接口
 #[pyclass(subclass)]
 #[derive(Debug, Clone)]
 pub(super) struct CredentialProvider(Box<dyn qiniu_sdk::credential::CredentialProvider>);
 
 #[pymethods]
 impl CredentialProvider {
-    #[args(opts = "GetOptions::default()")]
-    #[pyo3(text_signature = "($self, opts)")]
-    fn get(&self, opts: GetOptions, py: Python<'_>) -> PyResult<Py<Credential>> {
+    /// 返回七牛认证信息
+    ///
+    /// 该方法的异步版本为 [`Self::async_get`]。
+    #[args(opts = "None")]
+    #[pyo3(text_signature = "($self, opts = None)")]
+    fn get(&self, opts: Option<GetOptions>, py: Python<'_>) -> PyResult<Py<Credential>> {
         Py::new(
             py,
             (
                 Credential,
                 CredentialProvider(Box::new(
-                    py.allow_threads(|| self.0.get(opts.0))?.into_credential(),
+                    py.allow_threads(|| self.0.get(opts.unwrap_or_default().0))?
+                        .into_credential(),
                 )),
             ),
         )
     }
 
-    #[args(opts = "GetOptions::default()")]
-    #[pyo3(text_signature = "($self, opts)")]
-    fn async_get<'p>(&self, opts: GetOptions, py: Python<'p>) -> PyResult<&'p PyAny> {
+    /// 异步返回七牛认证信息
+    #[args(opts = "None")]
+    #[pyo3(text_signature = "($self, opts = None)")]
+    fn async_get<'p>(&self, opts: Option<GetOptions>, py: Python<'p>) -> PyResult<&'p PyAny> {
         let credential = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let py_initializer = (
                 Credential,
                 CredentialProvider(Box::new(
-                    credential.async_get(opts.0).await?.into_credential(),
+                    credential
+                        .async_get(opts.unwrap_or_default().0)
+                        .await?
+                        .into_credential(),
                 )),
             );
             Python::with_gil(|py| Py::new(py, py_initializer))
@@ -282,11 +315,14 @@ impl CredentialProvider {
     }
 }
 
+/// 全局认证信息提供者，可以将认证信息配置在全局变量中。任何全局认证信息提供者实例都可以设置和访问全局认证信息。
 #[pyclass(extends = CredentialProvider)]
+#[pyo3(text_signature = "()")]
 struct GlobalCredentialProvider;
 
 #[pymethods]
 impl GlobalCredentialProvider {
+    /// 创建全局认证信息提供者
     #[new]
     fn new() -> (Self, CredentialProvider) {
         (
@@ -295,6 +331,7 @@ impl GlobalCredentialProvider {
         )
     }
 
+    /// 配置全局认证信息
     #[staticmethod]
     #[pyo3(text_signature = "(credential)")]
     fn setup(credential: PyRef<'_, Credential>) -> PyResult<()> {
@@ -304,6 +341,7 @@ impl GlobalCredentialProvider {
         Ok(())
     }
 
+    /// 清空全局认证信息
     #[staticmethod]
     #[pyo3(text_signature = "()")]
     fn clear() {
@@ -311,11 +349,14 @@ impl GlobalCredentialProvider {
     }
 }
 
+/// 环境变量认证信息提供者，可以将认证信息配置在环境变量中。
 #[pyclass(extends = CredentialProvider)]
+#[pyo3(text_signature = "()")]
 struct EnvCredentialProvider;
 
 #[pymethods]
 impl EnvCredentialProvider {
+    /// 创建环境变量认证信息提供者
     #[new]
     fn new() -> (Self, CredentialProvider) {
         (
@@ -324,6 +365,7 @@ impl EnvCredentialProvider {
         )
     }
 
+    /// 配置环境变量认证信息提供者
     #[staticmethod]
     #[pyo3(text_signature = "(credential)")]
     fn setup(credential: PyRef<'_, Credential>) -> PyResult<()> {
@@ -333,6 +375,7 @@ impl EnvCredentialProvider {
         Ok(())
     }
 
+    /// 清空环境变量认证信息
     #[staticmethod]
     #[pyo3(text_signature = "()")]
     fn clear() {
@@ -340,12 +383,17 @@ impl EnvCredentialProvider {
     }
 }
 
+/// 认证信息串提供者
+///
+/// 将多个认证信息提供者串联，遍历并找寻第一个可用认证信息
 #[pyclass(extends = CredentialProvider)]
 #[derive(Debug, Copy, Clone, Default)]
+#[pyo3(text_signature = "(creds)")]
 struct ChainCredentialsProvider;
 
 #[pymethods]
 impl ChainCredentialsProvider {
+    /// 创建认证信息串提供者
     #[new]
     fn new(creds: Vec<CredentialProvider>) -> PyResult<(Self, CredentialProvider)> {
         let mut builder: Option<qiniu_sdk::credential::ChainCredentialsProviderBuilder> = None;
@@ -368,12 +416,15 @@ impl ChainCredentialsProvider {
     }
 }
 
+/// 获取认证信息的选项
 #[pyclass]
 #[derive(Default, Copy, Clone)]
+#[pyo3(text_signature = "()")]
 struct GetOptions(qiniu_sdk::credential::GetOptions);
 
 #[pymethods]
 impl GetOptions {
+    /// 创建认证信息的选项
     #[new]
     fn new() -> Self {
         Default::default()

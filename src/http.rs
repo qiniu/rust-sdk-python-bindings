@@ -41,11 +41,15 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     Ok(m)
 }
 
+/// HTTP 请求处理接口
+///
+/// 实现该接口，即可处理所有七牛 SDK 发送的 HTTP 请求
 #[pyclass(subclass)]
 pub(super) struct HttpCaller(Arc<dyn qiniu_sdk::http::HttpCaller>);
 
 #[pymethods]
 impl HttpCaller {
+    /// 阻塞发送 HTTP 请求
     #[pyo3(text_signature = "($self, request)")]
     fn call(
         &self,
@@ -61,6 +65,7 @@ impl HttpCaller {
         Py::new(py, (SyncHttpResponse(body), ResponseParts(parts)))
     }
 
+    /// 异步发送 HTTP 请求
     #[pyo3(text_signature = "($self, request)")]
     fn async_call<'p>(&self, request: AsyncHttpRequest, py: Python<'p>) -> PyResult<&'p PyAny> {
         let http_caller = self.0.to_owned();
@@ -83,7 +88,11 @@ impl HttpCaller {
     }
 }
 
+/// 七牛 Isahc HTTP 客户端实现
+///
+/// 基于 Isahc 库提供 HTTP 客户端接口实现
 #[pyclass(extends = HttpCaller)]
+#[pyo3(text_signature = "()")]
 struct IsahcHttpCaller;
 
 #[pymethods]
@@ -104,6 +113,7 @@ macro_rules! impl_http_request_builder {
     ($name:ident) => {
         #[pymethods]
         impl $name {
+            /// 设置请求 URL
             #[pyo3(text_signature = "($self, url)")]
             fn url(&mut self, url: &str) -> PyResult<()> {
                 let url = parse_uri(url)?;
@@ -111,6 +121,7 @@ macro_rules! impl_http_request_builder {
                 Ok(())
             }
 
+            /// 设置请求 HTTP 方法
             #[pyo3(text_signature = "($self, method)")]
             fn method(&mut self, method: &str) -> PyResult<()> {
                 let method = parse_method(method)?;
@@ -118,12 +129,14 @@ macro_rules! impl_http_request_builder {
                 Ok(())
             }
 
+            /// 设置请求 HTTP 版本
             #[pyo3(text_signature = "($self, version)")]
             fn version(&mut self, version: Version) -> PyResult<()> {
                 self.0.version(version.try_into()?);
                 Ok(())
             }
 
+            /// 设置请求 HTTP Headers
             #[pyo3(text_signature = "($self, headers)")]
             fn headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
                 let headers = parse_headers(headers)?;
@@ -131,11 +144,13 @@ macro_rules! impl_http_request_builder {
                 Ok(())
             }
 
+            /// 设置用户代理
             #[pyo3(text_signature = "($self, user_agent)")]
             fn appended_user_agent(&mut self, user_agent: &str) {
                 self.0.appended_user_agent(user_agent);
             }
 
+            /// 设置预解析的服务器套接字地址
             #[pyo3(text_signature = "($self, resolved_ip_addrs)")]
             fn resolved_ip_addrs(&mut self, resolved_ip_addrs: Vec<String>) -> PyResult<()> {
                 let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
@@ -143,6 +158,7 @@ macro_rules! impl_http_request_builder {
                 Ok(())
             }
 
+            /// 重置 HTTP 请求构建器
             #[pyo3(text_signature = "($self)")]
             fn reset(&mut self) {
                 self.0.reset();
@@ -161,7 +177,9 @@ macro_rules! impl_http_request_builder {
     };
 }
 
+/// 阻塞 HTTP 请求构建器
 #[pyclass]
+#[pyo3(text_signature = "()")]
 struct SyncHttpRequestBuilder(qiniu_sdk::http::SyncRequestBuilder<'static>);
 impl_http_request_builder!(SyncHttpRequestBuilder);
 
@@ -172,8 +190,9 @@ impl SyncHttpRequestBuilder {
         Self(qiniu_sdk::http::SyncRequestBuilder::new())
     }
 
+    /// 设置请求 HTTP 请求体
     #[args(len = "None")]
-    #[pyo3(text_signature = "($self, body, len)")]
+    #[pyo3(text_signature = "($self, body, len = None)")]
     fn body(&mut self, body: PyObject, len: Option<u64>, py: Python<'_>) -> PyResult<()> {
         if let Ok(body) = body.extract::<String>(py) {
             self.0.body(qiniu_sdk::http::SyncRequestBody::from(body));
@@ -190,13 +209,16 @@ impl SyncHttpRequestBuilder {
         Ok(())
     }
 
+    /// 构建 HTTP 请求，同时构建器被重置
     #[pyo3(text_signature = "($self)")]
     fn build(&mut self) -> SyncHttpRequest {
         SyncHttpRequest(self.0.build())
     }
 }
 
+/// 异步 HTTP 请求构建器
 #[pyclass]
+#[pyo3(text_signature = "()")]
 struct AsyncHttpRequestBuilder(qiniu_sdk::http::AsyncRequestBuilder<'static>);
 impl_http_request_builder!(AsyncHttpRequestBuilder);
 
@@ -207,8 +229,9 @@ impl AsyncHttpRequestBuilder {
         Self(qiniu_sdk::http::AsyncRequestBuilder::new())
     }
 
+    /// 设置请求 HTTP 请求体
     #[args(len = "None")]
-    #[pyo3(text_signature = "($self, body, len)")]
+    #[pyo3(text_signature = "($self, body, len = None)")]
     fn body(&mut self, body: PyObject, len: Option<u64>, py: Python<'_>) -> PyResult<()> {
         if let Ok(body) = body.extract::<String>(py) {
             self.0.body(qiniu_sdk::http::AsyncRequestBody::from(body));
@@ -225,13 +248,18 @@ impl AsyncHttpRequestBuilder {
         Ok(())
     }
 
+    /// 构建 HTTP 请求，同时构建器被重置
     #[pyo3(text_signature = "($self)")]
     fn build(&mut self) -> AsyncHttpRequest {
         AsyncHttpRequest(Arc::new(AsyncMutex::new(self.0.build())))
     }
 }
 
+/// 阻塞 HTTP 请求
+///
+/// 封装 HTTP 请求相关字段
 #[pyclass]
+#[pyo3(text_signature = "(**fields)")]
 struct SyncHttpRequest(qiniu_sdk::http::SyncRequest<'static>);
 
 #[pymethods]
@@ -246,17 +274,20 @@ impl SyncHttpRequest {
         Ok(Self(builder.build()))
     }
 
+    /// 创建 HTTP 请求构建器
     #[staticmethod]
     #[pyo3(text_signature = "()")]
     fn builder() -> SyncHttpRequestBuilder {
         SyncHttpRequestBuilder(qiniu_sdk::http::SyncRequest::builder())
     }
 
+    /// 获取 HTTP 请求 URL
     #[getter]
     fn get_url(&self) -> String {
         self.0.url().to_string()
     }
 
+    /// 设置 HTTP 请求 URL
     #[setter]
     fn set_url(&mut self, url: &str) -> PyResult<()> {
         *self.0.url_mut() = url
@@ -265,21 +296,25 @@ impl SyncHttpRequest {
         Ok(())
     }
 
+    /// 获取请求 HTTP 版本
     #[getter]
     fn get_version(&self) -> PyResult<Version> {
         self.0.version().try_into()
     }
 
+    /// 设置请求 HTTP 版本
     #[setter]
     fn set_version(&mut self, version: Version) {
         *self.0.version_mut() = version.into();
     }
 
+    /// 获取请求 HTTP 方法
     #[getter]
     fn get_method(&self) -> String {
         self.0.method().to_string()
     }
 
+    /// 设置请求 HTTP 方法
     #[setter]
     fn set_method(&mut self, method: &str) -> PyResult<()> {
         *self.0.method_mut() = method
@@ -288,32 +323,38 @@ impl SyncHttpRequest {
         Ok(())
     }
 
+    /// 获取请求 HTTP Headers
     #[getter]
     fn get_headers(&self) -> PyResult<HashMap<String, String>> {
         convert_headers_to_hashmap(self.0.headers())
     }
 
+    /// 设置请求 HTTP Headers
     #[setter]
     fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
         *self.0.headers_mut() = parse_headers(headers)?;
         Ok(())
     }
 
+    /// 获取用户代理
     #[getter]
     fn get_user_agent(&self) -> String {
         self.0.user_agent().to_string()
     }
 
+    /// 获取追加的用户代理
     #[getter]
     fn get_appended_user_agent(&self) -> String {
         self.0.appended_user_agent().to_string()
     }
 
+    /// 设置追加的用户代理
     #[setter]
     fn set_appended_user_agent(&mut self, appended_user_agent: &str) {
         *self.0.appended_user_agent_mut() = appended_user_agent.into();
     }
 
+    /// 获取预解析的服务器套接字地址
     #[getter]
     fn get_resolved_ip_addrs(&self) -> Option<Vec<String>> {
         self.0
@@ -321,6 +362,7 @@ impl SyncHttpRequest {
             .map(|ip_addrs| ip_addrs.iter().map(|ip_addr| ip_addr.to_string()).collect())
     }
 
+    /// 设置预解析的服务器套接字地址
     #[setter]
     fn set_resolved_ip_addrs(&mut self, resolved_ip_addrs: Vec<String>) -> PyResult<()> {
         let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
@@ -328,12 +370,13 @@ impl SyncHttpRequest {
         Ok(())
     }
 
-    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
-
+    /// 设置请求体
     #[setter]
     fn set_body(&mut self, body: Vec<u8>) {
         *self.0.body_mut() = qiniu_sdk::http::SyncRequestBody::from(body);
     }
+
+    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
 }
 
 impl SyncHttpRequest {
@@ -377,8 +420,12 @@ impl SyncHttpRequest {
     }
 }
 
+/// 异步 HTTP 请求
+///
+/// 封装 HTTP 请求相关字段
 #[pyclass]
 #[derive(Clone)]
+#[pyo3(text_signature = "(**fields)")]
 struct AsyncHttpRequest(Arc<AsyncMutex<qiniu_sdk::http::AsyncRequest<'static>>>);
 
 #[pymethods]
@@ -393,17 +440,20 @@ impl AsyncHttpRequest {
         Ok(Self(Arc::new(AsyncMutex::new(builder.build()))))
     }
 
+    /// 创建 HTTP 请求构建器
     #[staticmethod]
     #[pyo3(text_signature = "()")]
     fn builder() -> AsyncHttpRequestBuilder {
         AsyncHttpRequestBuilder(qiniu_sdk::http::AsyncRequest::builder())
     }
 
+    /// 获取 HTTP 请求 URL
     #[getter]
     fn get_url(&self) -> PyResult<String> {
         Ok(self.lock()?.url().to_string())
     }
 
+    /// 设置 HTTP 请求 URL
     #[setter]
     fn set_url(&mut self, url: &str) -> PyResult<()> {
         *self.lock()?.url_mut() = url
@@ -412,22 +462,26 @@ impl AsyncHttpRequest {
         Ok(())
     }
 
+    /// 获取请求 HTTP 版本
     #[getter]
     fn get_version(&mut self) -> PyResult<Version> {
         self.lock()?.version().try_into()
     }
 
+    /// 设置请求 HTTP 版本
     #[setter]
     fn set_version(&mut self, version: Version) -> PyResult<()> {
         *self.lock()?.version_mut() = version.into();
         Ok(())
     }
 
+    /// 获取请求 HTTP 方法
     #[getter]
     fn get_method(&mut self) -> PyResult<String> {
         Ok(self.lock()?.method().to_string())
     }
 
+    /// 设置请求 HTTP 方法
     #[setter]
     fn set_method(&mut self, method: &str) -> PyResult<()> {
         *self.lock()?.method_mut() = method
@@ -436,33 +490,39 @@ impl AsyncHttpRequest {
         Ok(())
     }
 
+    /// 获取请求 HTTP Headers
     #[getter]
     fn get_headers(&mut self) -> PyResult<HashMap<String, String>> {
         convert_headers_to_hashmap(self.lock()?.headers())
     }
 
+    /// 设置请求 HTTP Headers
     #[setter]
     fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
         *self.lock()?.headers_mut() = parse_headers(headers)?;
         Ok(())
     }
 
+    /// 获取用户代理
     #[getter]
     fn get_user_agent(&mut self) -> PyResult<String> {
         Ok(self.lock()?.user_agent().to_string())
     }
 
+    /// 获取追加的用户代理
     #[getter]
     fn get_appended_user_agent(&mut self) -> PyResult<String> {
         Ok(self.lock()?.appended_user_agent().to_string())
     }
 
+    /// 设置追加的用户代理
     #[setter]
     fn set_appended_user_agent(&mut self, appended_user_agent: &str) -> PyResult<()> {
         *self.lock()?.appended_user_agent_mut() = appended_user_agent.into();
         Ok(())
     }
 
+    /// 获取预解析的服务器套接字地址
     #[getter]
     fn get_resolved_ip_addrs(&mut self) -> PyResult<Option<Vec<String>>> {
         Ok(self
@@ -471,6 +531,7 @@ impl AsyncHttpRequest {
             .map(|ip_addrs| ip_addrs.iter().map(|ip_addr| ip_addr.to_string()).collect()))
     }
 
+    /// 设置预解析的服务器套接字地址
     #[setter]
     fn set_resolved_ip_addrs(&mut self, resolved_ip_addrs: Vec<String>) -> PyResult<()> {
         let resolved_ip_addrs = parse_ip_addrs(resolved_ip_addrs)?;
@@ -478,13 +539,14 @@ impl AsyncHttpRequest {
         Ok(())
     }
 
-    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
-
+    /// 设置请求体
     #[setter]
     fn set_body(&mut self, body: Vec<u8>) -> PyResult<()> {
         *self.lock()?.body_mut() = qiniu_sdk::http::AsyncRequestBody::from(body);
         Ok(())
     }
+
+    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
 }
 
 impl AsyncHttpRequest {
@@ -535,14 +597,20 @@ impl AsyncHttpRequest {
     }
 }
 
+/// HTTP 版本
 #[pyclass]
 #[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub(super) enum Version {
+    /// HTTP 0.9
     HTTP_09 = 9,
+    /// HTTP 1.0
     HTTP_10 = 10,
+    /// HTTP 1.1
     HTTP_11 = 11,
+    /// HTTP 2
     HTTP_2 = 20,
+    /// HTTP 3
     HTTP_3 = 30,
 }
 
@@ -576,8 +644,10 @@ impl From<Version> for qiniu_sdk::http::Version {
     }
 }
 
+/// HTTP 响应的指标信息
 #[pyclass]
 #[derive(Clone)]
+#[pyo3(text_signature = "(**opts)")]
 pub(super) struct Metrics(qiniu_sdk::http::Metrics);
 
 #[pymethods]
@@ -617,16 +687,19 @@ impl Metrics {
         }
     }
 
+    /// 获取总体请求耗时
     #[getter]
     fn get_total_duration(&self) -> Option<u128> {
         self.0.total_duration().map(|duration| duration.as_nanos())
     }
 
+    /// 设置总体请求耗时
     #[setter]
     fn set_total_duration(&mut self, duration: u64) {
         *self.0.total_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
+    /// 获取域名查询的耗时
     #[getter]
     fn get_name_lookup_duration(&self) -> Option<u128> {
         self.0
@@ -634,11 +707,13 @@ impl Metrics {
             .map(|duration| duration.as_nanos())
     }
 
+    /// 设置域名查询的耗时
     #[setter]
     fn set_name_lookup_duration(&mut self, duration: u64) {
         *self.0.name_lookup_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
+    /// 获取建立连接的耗时
     #[getter]
     fn get_connect_duration(&self) -> Option<u128> {
         self.0
@@ -646,11 +721,13 @@ impl Metrics {
             .map(|duration| duration.as_nanos())
     }
 
+    /// 设置建立连接的耗时
     #[setter]
     fn set_connect_duration(&mut self, duration: u64) {
         *self.0.connect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
+    /// 获取建立安全连接的耗时
     #[getter]
     fn get_secure_connect_duration(&self) -> Option<u128> {
         self.0
@@ -658,11 +735,13 @@ impl Metrics {
             .map(|duration| duration.as_nanos())
     }
 
+    /// 设置建立安全连接的耗时
     #[setter]
     fn set_secure_connect_duration(&mut self, duration: u64) {
         *self.0.secure_connect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
+    /// 获取重定向的耗时
     #[getter]
     fn get_redirect_duration(&self) -> Option<u128> {
         self.0
@@ -670,11 +749,13 @@ impl Metrics {
             .map(|duration| duration.as_nanos())
     }
 
+    /// 设置重定向的耗时
     #[setter]
     fn set_redirect_duration(&mut self, duration: u64) {
         *self.0.redirect_duration_mut() = Some(Duration::from_nanos(duration));
     }
 
+    /// 获取请求和响应数据传输的耗时
     #[getter]
     fn get_transfer_duration(&self) -> Option<u128> {
         self.0
@@ -682,6 +763,7 @@ impl Metrics {
             .map(|duration| duration.as_nanos())
     }
 
+    /// 设置请求和响应数据传输的耗时
     #[setter]
     fn set_transfer_duration(&mut self, duration: u64) {
         *self.0.transfer_duration_mut() = Some(Duration::from_nanos(duration));
@@ -707,28 +789,33 @@ struct ResponseParts(qiniu_sdk::http::ResponseParts);
 
 #[pymethods]
 impl ResponseParts {
+    /// 获取 HTTP 状态码
     #[getter]
     fn get_status_code(&self) -> u16 {
         self.0.status_code().as_u16()
     }
 
+    /// 设置 HTTP 状态码
     #[setter]
     fn set_status_code(&mut self, status_code: u16) -> PyResult<()> {
         *self.0.status_code_mut() = parse_status_code(status_code)?;
         Ok(())
     }
 
+    /// 获取 HTTP Headers
     #[getter]
     fn get_headers(&self) -> PyResult<HashMap<String, String>> {
         convert_headers_to_hashmap(self.0.headers())
     }
 
+    /// 设置 HTTP Headers
     #[setter]
     fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
         *self.0.headers_mut() = parse_headers(headers)?;
         Ok(())
     }
 
+    /// 获取 HTTP 版本
     #[getter]
     fn get_version(&self) -> PyResult<Version> {
         self.0
@@ -737,16 +824,19 @@ impl ResponseParts {
             .map_err(|err: PyErr| QiniuInvalidHttpVersionError::new_err(err.to_string()))
     }
 
+    /// 设置 HTTP 版本
     #[setter]
     fn set_version(&mut self, version: Version) {
         *self.0.version_mut() = version.into();
     }
 
+    /// 获取 HTTP 服务器 IP 地址
     #[getter]
     fn get_server_ip(&self) -> Option<String> {
         self.0.server_ip().map(|ip| ip.to_string())
     }
 
+    /// 设置 HTTP 服务器 IP 地址
     #[setter]
     fn set_server_ip(&mut self, server_ip: String) -> PyResult<()> {
         *self.0.server_ip_mut() = server_ip
@@ -756,21 +846,25 @@ impl ResponseParts {
         Ok(())
     }
 
+    /// 获取 HTTP 服务器端口号
     #[getter]
     fn get_server_port(&self) -> Option<u16> {
         self.0.server_port().map(|ip| ip.get())
     }
 
+    /// 设置 HTTP 服务器端口号
     #[setter]
     fn set_server_port(&mut self, server_port: u16) {
         *self.0.server_port_mut() = NonZeroU16::new(server_port);
     }
 
+    /// 获取 HTTP 响应的指标信息
     #[getter]
     fn get_metrics(&self) -> Option<Metrics> {
         self.0.metrics().cloned().map(Metrics)
     }
 
+    /// 设置 HTTP 响应的指标信息
     #[setter]
     fn set_metrics(&mut self, metrics: Metrics) {
         *self.0.metrics_mut() = Some(metrics.0);
@@ -819,7 +913,7 @@ macro_rules! impl_response_body {
                 Ok(true)
             }
 
-            #[pyo3(text_signature = "($self, offset, whence)")]
+            #[pyo3(text_signature = "($self, offset, whence = 0)")]
             #[args(whence = "0")]
             pub fn seek(&self, offset: i64, whence: i64) -> PyResult<bool> {
                 let _offset = offset;
@@ -837,7 +931,7 @@ macro_rules! impl_response_body {
                 Err(PyNotImplementedError::new_err("tell"))
             }
 
-            #[pyo3(text_signature = "($self, size)")]
+            #[pyo3(text_signature = "($self, size = None)")]
             #[args(size = "None")]
             pub fn truncate(&self, size: Option<u64>) -> PyResult<()> {
                 let _size = size;
@@ -858,7 +952,11 @@ macro_rules! impl_response_body {
     };
 }
 
+/// 阻塞 HTTP 响应
+///
+/// 封装 HTTP 响应相关字段
 #[pyclass(extends = ResponseParts)]
+#[pyo3(text_signature = "(**fields)")]
 struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
 
 #[pymethods]
@@ -902,7 +1000,8 @@ impl SyncHttpResponse {
         Ok((Self(body), ResponseParts(parts)))
     }
 
-    #[pyo3(text_signature = "($self, size, /)")]
+    /// 读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
     pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
         let mut buf = Vec::new();
@@ -918,6 +1017,7 @@ impl SyncHttpResponse {
         Ok(PyBytes::new(py, &buf))
     }
 
+    /// 读取所有响应体数据
     #[pyo3(text_signature = "($self)")]
     pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
         self.read(-1, py)
@@ -932,7 +1032,11 @@ impl SyncHttpResponse {
 
 impl_response_body!(SyncHttpResponse);
 
+/// 异步 HTTP 响应
+///
+/// 封装 HTTP 响应相关字段
 #[pyclass(extends = ResponseParts)]
+#[pyo3(text_signature = "(**fields)")]
 struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
 
 #[pymethods]
@@ -976,7 +1080,8 @@ impl AsyncHttpResponse {
         Ok((Self(Arc::new(AsyncMutex::new(body))), ResponseParts(parts)))
     }
 
-    #[pyo3(text_signature = "($self, size, /)")]
+    /// 异步读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
     pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
         let reader = self.0.to_owned();
@@ -994,6 +1099,7 @@ impl AsyncHttpResponse {
         })
     }
 
+    /// 异步所有读取响应体数据
     #[pyo3(text_signature = "($self)")]
     pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
         self.read(-1, py)
