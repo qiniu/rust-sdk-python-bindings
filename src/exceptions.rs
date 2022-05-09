@@ -5,6 +5,10 @@ use pyo3::{
 };
 
 pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add(
+        "QiniuUserAgentInitializeError",
+        py.get_type::<QiniuUserAgentInitializeError>(),
+    )?;
     m.add("QiniuCallbackError", py.get_type::<QiniuCallbackError>())?;
     m.add(
         "QiniuDataLockedError",
@@ -68,6 +72,12 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     Ok(())
 }
 
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuUserAgentInitializeError,
+    PyRuntimeError,
+    "七牛用户代理初始化异常"
+);
 create_exception!(
     qiniu_sdk_bindings,
     QiniuCallbackError,
