@@ -17,6 +17,9 @@
 .. automodule:: qiniu_sdk_bindings.http
    :members:
 
+.. automodule:: qiniu_sdk_bindings.http_client
+   :members:
+
 .. automodule:: qiniu_sdk_bindings
    :members:
 

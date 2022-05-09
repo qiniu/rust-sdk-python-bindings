@@ -45,6 +45,18 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuInvalidIpAddrError>(),
     )?;
     m.add(
+        "QiniuInvalidDomainWithPortError",
+        py.get_type::<QiniuInvalidDomainWithPortError>(),
+    )?;
+    m.add(
+        "QiniuInvalidIpAddrWithPortError",
+        py.get_type::<QiniuInvalidIpAddrWithPortError>(),
+    )?;
+    m.add(
+        "QiniuInvalidEndpointError",
+        py.get_type::<QiniuInvalidEndpointError>(),
+    )?;
+    m.add(
         "QiniuInvalidPortError",
         py.get_type::<QiniuInvalidPortError>(),
     )?;
@@ -143,6 +155,24 @@ create_exception!(
     QiniuInvalidIpAddrError,
     PyValueError,
     "七牛非法 IP 地址错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidDomainWithPortError,
+    PyValueError,
+    "七牛非法域名错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidIpAddrWithPortError,
+    PyValueError,
+    "七牛非法 IP 地址错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidEndpointError,
+    PyValueError,
+    "七牛非法终端地址错误"
 );
 create_exception!(
     qiniu_sdk_bindings,
