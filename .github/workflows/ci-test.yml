@@ -3,9 +3,11 @@ name: Run Test Cases
 jobs:
   linux:
     name: CI Test On Linux
-    runs-on: ubuntu-latest
     strategy:
       matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
         rust:
           - 1.60.0
         python:
@@ -14,6 +16,7 @@ jobs:
           - '3.10'
           - 'pypy-3.8'
           - 'pypy-3.9'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
