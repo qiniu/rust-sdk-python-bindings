@@ -245,7 +245,9 @@ impl CredentialProvider {
             py,
             (
                 Credential,
-                CredentialProvider(Box::new(self.0.get(opts.0)?.into_credential())),
+                CredentialProvider(Box::new(
+                    py.allow_threads(|| self.0.get(opts.0))?.into_credential(),
+                )),
             ),
         )
     }

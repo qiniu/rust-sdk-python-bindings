@@ -478,10 +478,9 @@ struct UploadTokenProvider(Box<dyn qiniu_sdk::upload_token::UploadTokenProvider>
 impl UploadTokenProvider {
     #[args(opts = "GetAccessKeyOptions::default()")]
     #[pyo3(text_signature = "($self, opts)")]
-    fn access_key(&self, opts: GetAccessKeyOptions) -> PyResult<String> {
-        Ok(self
-            .0
-            .access_key(opts.0)
+    fn access_key(&self, opts: GetAccessKeyOptions, py: Python<'_>) -> PyResult<String> {
+        Ok(py
+            .allow_threads(|| self.0.access_key(opts.0))
             .map_err(convert_parse_error_to_py_err)?
             .into_access_key()
             .to_string())
@@ -489,10 +488,9 @@ impl UploadTokenProvider {
 
     #[args(opts = "GetPolicyOptions::default()")]
     #[pyo3(text_signature = "($self, opts)")]
-    fn policy(&self, opts: GetPolicyOptions) -> PyResult<UploadPolicy> {
+    fn policy(&self, opts: GetPolicyOptions, py: Python<'_>) -> PyResult<UploadPolicy> {
         Ok(UploadPolicy(
-            self.0
-                .policy(opts.0)
+            py.allow_threads(|| self.0.policy(opts.0))
                 .map_err(convert_parse_error_to_py_err)?
                 .into_upload_policy(),
         ))
@@ -500,20 +498,18 @@ impl UploadTokenProvider {
 
     #[args(opts = "ToStringOptions::default()")]
     #[pyo3(text_signature = "($self, opts)")]
-    fn to_token_string(&self, opts: ToStringOptions) -> PyResult<String> {
-        Ok(self
-            .0
-            .to_token_string(opts.0)
+    fn to_token_string(&self, opts: ToStringOptions, py: Python<'_>) -> PyResult<String> {
+        Ok(py
+            .allow_threads(|| self.0.to_token_string(opts.0))
             .map_err(convert_to_string_error_to_py_err)?
             .into_owned())
     }
 
     #[args(opts = "GetPolicyOptions::default()")]
     #[pyo3(text_signature = "($self, opts)")]
-    fn bucket_name(&self, opts: GetPolicyOptions) -> PyResult<String> {
-        Ok(self
-            .0
-            .bucket_name(opts.0)
+    fn bucket_name(&self, opts: GetPolicyOptions, py: Python<'_>) -> PyResult<String> {
+        Ok(py
+            .allow_threads(|| self.0.bucket_name(opts.0))
             .map_err(convert_parse_error_to_py_err)?
             .to_string())
     }
@@ -585,8 +581,8 @@ impl UploadTokenProvider {
         format!("{:?}", self.0)
     }
 
-    fn __str__(&self) -> PyResult<String> {
-        self.to_token_string(Default::default())
+    fn __str__(&self, py: Python<'_>) -> PyResult<String> {
+        self.to_token_string(Default::default(), py)
     }
 }
 

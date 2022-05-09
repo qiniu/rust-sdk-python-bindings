@@ -1,5 +1,9 @@
+from threading import Thread
 from qiniu_sdk_bindings import http
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from aiohttp import web
 import unittest
+import time
 
 
 class TestSyncHttpRequest(unittest.TestCase):
@@ -128,21 +132,62 @@ class TestAsyncHttpResponse(unittest.IsolatedAsyncioTestCase):
 
 class TestSyncIsahcHttpCaller(unittest.TestCase):
     def test_sync_isahc_http_caller(self):
-        req = http.SyncHttpRequest(
-            url='https://www.qiniu.com/robots.txt', method='GET')
-        resp = http.IsahcHttpCaller().call(req)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers['content-type'], 'text/plain')
-        self.assertEqual(resp.server_port, 443)
-        self.assertTrue(b'Disallow: /' in resp.readall())
+        class HttpHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                content_length = int(self.headers['Content-Length'])
+                req_body = self.rfile.read(content_length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(content_length))
+                self.send_header("X-Reqid", "fakereqid")
+                self.end_headers()
+                self.wfile.write(req_body)
+
+        httpd = ThreadingHTTPServer(('127.0.0.1', 0), HttpHandler)
+        httpd.allow_reuse_address = True
+        server_port = httpd.server_address[1]
+        thread = Thread(target=httpd.serve_forever)
+        thread.start()
+
+        try:
+            req = http.SyncHttpRequest(
+                url='http://127.0.0.1:%d/robots.txt' % server_port,
+                method='POST',
+                body=b'hello world')
+            resp = http.IsahcHttpCaller().call(req)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers['content-type'], 'text/plain')
+            self.assertEqual(resp.headers['x-reqid'], 'fakereqid')
+            self.assertEqual(resp.server_ip, '127.0.0.1')
+            self.assertEqual(resp.server_port, server_port)
+            self.assertEqual(resp.readall(), b'hello world')
+        finally:
+            httpd.shutdown()
+            thread.join()
 
 
 class TestAsyncIsahcHttpCaller(unittest.IsolatedAsyncioTestCase):
     async def test_async_isahc_http_caller(self):
-        req = http.AsyncHttpRequest(
-            url='https://www.qiniu.com/robots.txt', method='GET')
-        resp = await http.IsahcHttpCaller().async_call(req)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers['content-type'], 'text/plain')
-        self.assertEqual(resp.server_port, 443)
-        self.assertTrue(b'Disallow: /' in await resp.readall())
+        async def put_handler(request):
+            req_body = await request.read()
+            return web.Response(body=req_body, headers={'Content-Type': 'text/plain', 'X-Reqid': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.put('/robots.txt', put_handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            req = http.AsyncHttpRequest(
+                url='http://127.0.0.1:8089/robots.txt', method='PUT', body=b'hello world')
+            resp = await http.IsahcHttpCaller().async_call(req)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers['content-type'], 'text/plain')
+            self.assertEqual(resp.headers['x-reqid'], 'fakereqid')
+            self.assertEqual(resp.server_ip, '127.0.0.1')
+            self.assertEqual(resp.server_port, 8089)
+            self.assertEqual(await resp.readall(), b'hello world')
+        finally:
+            await runner.cleanup()

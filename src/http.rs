@@ -52,10 +52,11 @@ impl HttpCaller {
         request: &mut SyncHttpRequest,
         py: Python<'_>,
     ) -> PyResult<Py<SyncHttpResponse>> {
-        let response = self
-            .0
-            .call(&mut request.0)
-            .map_err(|err| QiniuHttpCallError::new_err(err.to_string()))?;
+        let response = py.allow_threads(|| {
+            self.0
+                .call(&mut request.0)
+                .map_err(|err| QiniuHttpCallError::new_err(err.to_string()))
+        })?;
         let (parts, body) = response.into_parts_and_body();
         Py::new(py, (SyncHttpResponse(body), ResponseParts(parts)))
     }
