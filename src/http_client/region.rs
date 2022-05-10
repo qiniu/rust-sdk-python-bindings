@@ -3,7 +3,7 @@ use crate::{
         QiniuApiCallError, QiniuEmptyStaticRegionsProvider, QiniuInvalidDomainWithPortError,
         QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError, QiniuInvalidServiceNameError,
     },
-    utils::{extract_endpoints, extract_service_names},
+    utils::extract_endpoints,
 };
 use pyo3::{prelude::*, pyclass::CompareOp, types::PyDict};
 use qiniu_sdk::http_client::{
@@ -14,6 +14,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<DomainWithPort>()?;
     m.add_class::<IpAddrWithPort>()?;
     m.add_class::<Endpoint>()?;
+    m.add_class::<ServiceName>()?;
     m.add_class::<Endpoints>()?;
     m.add_class::<EndpointsProvider>()?;
     m.add_class::<Region>()?;
@@ -191,7 +192,7 @@ impl Endpoint {
 
 #[pyclass]
 #[derive(Clone, Copy)]
-pub(crate) enum ServiceName {
+enum ServiceName {
     /// 上传服务
     Up = 0,
 
@@ -257,10 +258,20 @@ struct EndpointsProvider(Box<dyn qiniu_sdk::http_client::EndpointsProvider>);
 
 #[pymethods]
 impl EndpointsProvider {
-    #[args(opts = "**")]
-    fn get_endpoints(&self, opts: Option<&PyDict>, py: Python<'_>) -> PyResult<Py<Endpoints>> {
-        let mut service_names = Vec::new();
-        let opts = Self::extend_endpoints_get_options(opts, &mut service_names)?;
+    #[pyo3(text_signature = "(/, service_names = None)")]
+    fn get_endpoints(
+        &self,
+        service_names: Option<Vec<ServiceName>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<Endpoints>> {
+        let service_names = service_names
+            .unwrap_or_default()
+            .into_iter()
+            .map(|svc| svc.into())
+            .collect::<Vec<_>>();
+        let opts = EndpointsGetOptions::builder()
+            .service_names(&service_names)
+            .build();
         let endpoints = py
             .allow_threads(|| self.0.get_endpoints(opts))
             .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
@@ -268,21 +279,22 @@ impl EndpointsProvider {
         Self::make_initializer(endpoints, py)
     }
 
-    #[args(opts = "**")]
+    #[pyo3(text_signature = "(/, service_names = None)")]
     fn async_get_endpoints<'p>(
         &self,
-        opts: Option<Py<PyDict>>,
+        service_names: Option<Vec<ServiceName>>,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
         let provider = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
-            let mut service_names = Vec::new();
-            let opts = Python::with_gil(|py| {
-                Self::extend_endpoints_get_options(
-                    opts.as_ref().map(|opts| opts.as_ref(py)),
-                    &mut service_names,
-                )
-            })?;
+            let service_names = service_names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|svc| svc.into())
+                .collect::<Vec<_>>();
+            let opts = EndpointsGetOptions::builder()
+                .service_names(&service_names)
+                .build();
             let endpoints = provider
                 .async_get_endpoints(opts)
                 .await
@@ -302,21 +314,6 @@ impl EndpointsProvider {
 }
 
 impl EndpointsProvider {
-    fn extend_endpoints_get_options<'a>(
-        opts: Option<&PyDict>,
-        service_names: &'a mut Vec<qiniu_sdk::http_client::ServiceName>,
-    ) -> PyResult<EndpointsGetOptions<'a>> {
-        if let Some(opts) = opts {
-            if let Some(svcs) = opts.get_item("service_names") {
-                service_names.extend(extract_service_names(svcs)?);
-            }
-        }
-        let opts = EndpointsGetOptions::builder()
-            .service_names(service_names)
-            .build();
-        Ok(opts)
-    }
-
     fn make_initializer(
         endpoint: qiniu_sdk::http_client::Endpoints,
         py: Python<'_>,
