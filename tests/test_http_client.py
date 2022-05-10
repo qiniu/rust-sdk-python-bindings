@@ -74,6 +74,46 @@ class TestEndpoint(unittest.TestCase):
         self.assertEqual(d.port, None)
 
 
+class TestEndpoints(unittest.TestCase):
+    def test_endpoints(self):
+        e = http_client.Endpoints(
+            [
+                http_client.Endpoint('192.168.1.1', 8080),
+                ('192.168.1.2', 8080),
+                '192.168.1.3:8080',
+            ]
+        )
+        self.assertEqual(e.preferred, [
+            http_client.Endpoint('192.168.1.1', 8080),
+            http_client.Endpoint('192.168.1.2', 8080),
+            http_client.Endpoint('192.168.1.3', 8080),
+        ])
+        self.assertEqual(e.alternative, [])
+
+        e = http_client.Endpoints(
+            [
+                http_client.Endpoint('192.168.1.1', 8080),
+                ('192.168.1.2', 8080),
+                '192.168.1.3:8080',
+            ],
+            [
+                http_client.Endpoint('192.168.2.1', 8080),
+                ('192.168.2.2', 8080),
+                '192.168.2.3:8080',
+            ]
+        )
+        self.assertEqual(e.preferred, [
+            http_client.Endpoint('192.168.1.1', 8080),
+            http_client.Endpoint('192.168.1.2', 8080),
+            http_client.Endpoint('192.168.1.3', 8080),
+        ])
+        self.assertEqual(e.alternative, [
+            http_client.Endpoint('192.168.2.1', 8080),
+            http_client.Endpoint('192.168.2.2', 8080),
+            http_client.Endpoint('192.168.2.3', 8080),
+        ])
+
+
 class TestRegion(unittest.TestCase):
     def test_region(self):
         r = http_client.Region('z0',
@@ -113,6 +153,13 @@ class TestRegion(unittest.TestCase):
             http_client.Endpoint('192.168.2.1', 8080),
             http_client.Endpoint('192.168.2.2', 8080),
         ])
+        self.assertEqual(r.up, http_client.Endpoints([
+            '192.168.1.1:8080',
+            '192.168.1.2:8080',
+        ], [
+            '192.168.2.1:8080',
+            '192.168.2.2:8080',
+        ]))
         self.assertEqual(r.io_preferred_endpoints, [
             http_client.Endpoint('192.168.3.1', 8080),
             http_client.Endpoint('192.168.3.2', 8080),
@@ -121,6 +168,13 @@ class TestRegion(unittest.TestCase):
             http_client.Endpoint('192.168.4.1', 8080),
             http_client.Endpoint('192.168.4.2', 8080),
         ])
+        self.assertEqual(r.io, http_client.Endpoints([
+            '192.168.3.1:8080',
+            '192.168.3.2:8080',
+        ], [
+            '192.168.4.1:8080',
+            '192.168.4.2:8080',
+        ]))
         self.assertEqual(r.rs_preferred_endpoints, [
             http_client.Endpoint('192.168.5.1', 8080),
             http_client.Endpoint('192.168.5.2', 8080),
@@ -129,6 +183,13 @@ class TestRegion(unittest.TestCase):
             http_client.Endpoint('192.168.6.1', 8080),
             http_client.Endpoint('192.168.6.2', 8080),
         ])
+        self.assertEqual(r.rs, http_client.Endpoints([
+            '192.168.5.1:8080',
+            '192.168.5.2:8080',
+        ], [
+            '192.168.6.1:8080',
+            '192.168.6.2:8080',
+        ]))
         self.assertEqual(r.rsf_preferred_endpoints, [
             http_client.Endpoint('192.168.7.1', 8080),
             http_client.Endpoint('192.168.7.2', 8080),
@@ -137,3 +198,10 @@ class TestRegion(unittest.TestCase):
             http_client.Endpoint('192.168.8.1', 8080),
             http_client.Endpoint('192.168.8.2', 8080),
         ])
+        self.assertEqual(r.rsf, http_client.Endpoints([
+            '192.168.7.1:8080',
+            '192.168.7.2:8080',
+        ], [
+            '192.168.8.1:8080',
+            '192.168.8.2:8080',
+        ]))

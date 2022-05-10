@@ -13,6 +13,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<DomainWithPort>()?;
     m.add_class::<IpAddrWithPort>()?;
     m.add_class::<Endpoint>()?;
+    m.add_class::<Endpoints>()?;
     m.add_class::<Region>()?;
     Ok(())
 }
@@ -183,6 +184,55 @@ impl Endpoint {
     }
 }
 
+/// 终端地址列表
+///
+/// 存储一个七牛服务的多个终端地址，包含主要地址列表和备选地址列表
+#[pyclass]
+#[pyo3(text_signature = "(preferred_endpoints, alternative_endpoints = None)")]
+#[derive(Clone)]
+struct Endpoints(qiniu_sdk::http_client::Endpoints);
+
+#[pymethods]
+impl Endpoints {
+    #[new]
+    #[args(alternative_endpoints = "None")]
+    fn new(preferred_endpoints: &PyAny, alternative_endpoints: Option<&PyAny>) -> PyResult<Self> {
+        let mut builder = qiniu_sdk::http_client::EndpointsBuilder::default();
+        builder.add_preferred_endpoints(extract_endpoints(preferred_endpoints)?);
+        if let Some(alternative_endpoints) = alternative_endpoints {
+            builder.add_alternative_endpoints(extract_endpoints(alternative_endpoints)?);
+        }
+        Ok(Self(builder.build()))
+    }
+
+    /// 返回主要终端地址列表
+    #[getter]
+    fn get_preferred(&self) -> Vec<Endpoint> {
+        self.0.preferred().iter().cloned().map(Endpoint).collect()
+    }
+
+    /// 返回备选终端地址列表
+    #[getter]
+    fn get_alternative(&self) -> Vec<Endpoint> {
+        self.0.alternative().iter().cloned().map(Endpoint).collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __richcmp__(&self, other: &Self, op: CompareOp, py: Python<'_>) -> PyObject {
+        match op {
+            CompareOp::Eq => (self.0 == other.0).to_object(py),
+            _ => py.NotImplemented(),
+        }
+    }
+}
+
 /// 七牛存储区域
 ///
 /// 提供七牛不同服务的终端地址列表
@@ -263,76 +313,130 @@ impl Region {
         self.0.s3_region_id()
     }
 
+    /// 获取上传服务终端列表
+    #[getter]
+    fn get_up(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.up())
+    }
+
     /// 获取上传服务主要终端列表
     #[getter]
     fn get_up_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.up_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.up_preferred_endpoints())
     }
 
     /// 获取上传服务备选终端列表
     #[getter]
     fn get_up_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.up_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.up_alternative_endpoints())
+    }
+
+    /// 获取下载服务终端列表
+    #[getter]
+    fn get_io(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.io())
     }
 
     /// 获取下载服务主要终端列表
     #[getter]
     fn get_io_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.io_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.io_preferred_endpoints())
     }
 
     /// 获取下载服务备选终端列表
     #[getter]
     fn get_io_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.io_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.io_alternative_endpoints())
+    }
+
+    /// 获取存储空间管理服务终端列表
+    #[getter]
+    fn get_uc(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.uc())
+    }
+
+    /// 获取存储空间管理服务主要终端列表
+    #[getter]
+    fn get_uc_preferred_endpoints(&self) -> Vec<Endpoint> {
+        encapsulate_endpoint_vec(self.0.uc_preferred_endpoints())
+    }
+
+    /// 获取存储空间管理服务备选终端列表
+    #[getter]
+    fn get_uc_alternative_endpoints(&self) -> Vec<Endpoint> {
+        encapsulate_endpoint_vec(self.0.uc_alternative_endpoints())
+    }
+
+    /// 获取元数据管理服务终端列表
+    #[getter]
+    fn get_rs(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.rs())
     }
 
     /// 获取元数据管理服务主要终端列表
     #[getter]
     fn get_rs_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.rs_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.rs_preferred_endpoints())
     }
 
     /// 获取元数据管理服务备选终端列表
     #[getter]
     fn get_rs_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.rs_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.rs_alternative_endpoints())
+    }
+
+    /// 获取元数据列举服务终端列表
+    #[getter]
+    fn get_rsf(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.rsf())
     }
 
     /// 获取元数据列举服务主要终端列表
     #[getter]
     fn get_rsf_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.rsf_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.rsf_preferred_endpoints())
     }
 
     /// 获取元数据列举服务备选终端列表
     #[getter]
     fn get_rsf_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.rsf_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.rsf_alternative_endpoints())
+    }
+
+    /// 获取 API 入口服务终端列表
+    #[getter]
+    fn get_api(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.api())
     }
 
     /// 获取 API 入口服务主要终端列表
     #[getter]
     fn get_api_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.api_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.api_preferred_endpoints())
     }
 
     /// 获取 API 入口服务备选终端列表
     #[getter]
     fn get_api_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.api_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.api_alternative_endpoints())
+    }
+
+    /// 获取 S3 入口服务终端列表
+    #[getter]
+    fn get_s3(&self) -> Endpoints {
+        encapsulate_endpoints(self.0.s3())
     }
 
     /// 获取 S3 入口服务主要终端列表
     #[getter]
     fn get_s3_preferred_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.s3_preferred_endpoints())
+        encapsulate_endpoint_vec(self.0.s3_preferred_endpoints())
     }
 
     /// 获取 S3 入口服务备选终端列表
     #[getter]
     fn get_s3_alternative_endpoints(&self) -> Vec<Endpoint> {
-        encapsulate_endpoints(self.0.s3_alternative_endpoints())
+        encapsulate_endpoint_vec(self.0.s3_alternative_endpoints())
     }
 
     fn __repr__(&self) -> String {
@@ -351,6 +455,10 @@ impl Region {
     }
 }
 
-fn encapsulate_endpoints(endpoints: &[qiniu_sdk::http_client::Endpoint]) -> Vec<Endpoint> {
+fn encapsulate_endpoint_vec(endpoints: &[qiniu_sdk::http_client::Endpoint]) -> Vec<Endpoint> {
     endpoints.iter().cloned().map(Endpoint).collect()
+}
+
+fn encapsulate_endpoints(endpoints: &qiniu_sdk::http_client::Endpoints) -> Endpoints {
+    Endpoints(endpoints.to_owned())
 }
