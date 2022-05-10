@@ -64,6 +64,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         "QiniuEmptyChainCredentialsProvider",
         py.get_type::<QiniuEmptyChainCredentialsProvider>(),
     )?;
+    m.add(
+        "QiniuInvalidServiceNameError",
+        py.get_type::<QiniuInvalidServiceNameError>(),
+    )?;
     m.add("QiniuJsonError", py.get_type::<QiniuJsonError>())?;
     m.add("QiniuTimeError", py.get_type::<QiniuTimeError>())?;
     m.add("QiniuBase64Error", py.get_type::<QiniuBase64Error>())?;
@@ -77,6 +81,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     )?;
     m.add("QiniuIoError", py.get_type::<QiniuIoError>())?;
     m.add("QiniuHttpCallError", py.get_type::<QiniuHttpCallError>())?;
+    m.add("QiniuApiCallError", py.get_type::<QiniuApiCallError>())?;
     m.add(
         "QiniuBodySizeMissingError",
         py.get_type::<QiniuBodySizeMissingError>(),
@@ -194,6 +199,12 @@ create_exception!(
 );
 create_exception!(
     qiniu_sdk_bindings,
+    QiniuInvalidServiceNameError,
+    PyValueError,
+    "七牛非法服务名称错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
     QiniuJsonError,
     PyValueError,
     "七牛 JSON 错误"
@@ -233,4 +244,11 @@ create_exception!(
     QiniuHttpCallError,
     PyIOError,
     "七牛 HTTP 调用错误"
+);
+
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuApiCallError,
+    PyIOError,
+    "七牛 API 调用错误"
 );

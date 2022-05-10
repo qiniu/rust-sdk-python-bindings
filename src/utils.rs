@@ -4,7 +4,7 @@ use super::{
         QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError, QiniuInvalidMethodError,
         QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
     },
-    http_client::Endpoint,
+    http_client::{Endpoint, ServiceName},
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
@@ -463,6 +463,16 @@ pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_cli
     } else {
         Ok(endpoint.extract::<Endpoint>()?.into_inner())
     }
+}
+
+pub(super) fn extract_service_names(
+    service_names: &PyAny,
+) -> PyResult<Vec<qiniu_sdk::http_client::ServiceName>> {
+    Ok(service_names
+        .extract::<Vec<ServiceName>>()?
+        .into_iter()
+        .map(|svc| svc.into())
+        .collect::<Vec<_>>())
 }
 
 fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {
