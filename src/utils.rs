@@ -1,13 +1,19 @@
-use super::exceptions::{
-    QiniuBodySizeMissingError, QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError,
-    QiniuInvalidIpAddrError, QiniuInvalidMethodError, QiniuInvalidPortError,
-    QiniuInvalidStatusCodeError, QiniuInvalidURLError,
+use super::{
+    exceptions::{
+        QiniuBodySizeMissingError, QiniuInvalidEndpointError, QiniuInvalidHeaderNameError,
+        QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError, QiniuInvalidMethodError,
+        QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
+    },
+    http_client::Endpoint,
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
-use qiniu_sdk::http::{
-    header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName, HeaderValue,
-    Method, Metrics, StatusCode, SyncRequestBody, SyncResponseBody, Uri, Version,
+use qiniu_sdk::{
+    http::{
+        header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName,
+        HeaderValue, Method, Metrics, StatusCode, SyncRequestBody, SyncResponseBody, Uri, Version,
+    },
+    http_client::EndpointParseError,
 };
 use smart_default::SmartDefault;
 use std::{
@@ -433,6 +439,30 @@ pub(super) fn extract_metrics(metrics: &PyAny) -> PyResult<Metrics> {
     metrics
         .extract::<super::http::Metrics>()
         .map(|m| m.into_inner())
+}
+
+pub(super) fn extract_endpoints(
+    endpoints: &PyAny,
+) -> PyResult<Vec<qiniu_sdk::http_client::Endpoint>> {
+    endpoints
+        .extract::<Vec<&PyAny>>()?
+        .into_iter()
+        .map(extract_endpoint)
+        .collect()
+}
+
+pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_client::Endpoint> {
+    if let Ok((domain_or_ip_addr, port)) = endpoint.extract::<(&str, u16)>() {
+        format!("{}:{}", domain_or_ip_addr, port)
+            .parse()
+            .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))
+    } else if let Ok(domain_or_ip_addr) = endpoint.extract::<&str>() {
+        domain_or_ip_addr
+            .parse()
+            .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))
+    } else {
+        Ok(endpoint.extract::<Endpoint>()?.into_inner())
+    }
 }
 
 fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {
