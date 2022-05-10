@@ -1,7 +1,7 @@
 use crate::{
     exceptions::{
-        QiniuApiCallError, QiniuInvalidDomainWithPortError, QiniuInvalidEndpointError,
-        QiniuInvalidIpAddrWithPortError, QiniuInvalidServiceNameError,
+        QiniuApiCallError, QiniuEmptyStaticRegionsProvider, QiniuInvalidDomainWithPortError,
+        QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError, QiniuInvalidServiceNameError,
     },
     utils::{extract_endpoints, extract_service_names},
 };
@@ -15,7 +15,11 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<IpAddrWithPort>()?;
     m.add_class::<Endpoint>()?;
     m.add_class::<Endpoints>()?;
+    m.add_class::<EndpointsProvider>()?;
     m.add_class::<Region>()?;
+    m.add_class::<RegionsProvider>()?;
+    m.add_class::<StaticRegionsProvider>()?;
+
     Ok(())
 }
 
@@ -690,4 +694,24 @@ fn encapsulate_endpoints(endpoints: &qiniu_sdk::http_client::Endpoints) -> PyRes
             ),
         )
     })
+}
+
+/// 静态区域信息提供者
+#[pyclass(extends = RegionsProvider)]
+#[derive(Clone)]
+struct StaticRegionsProvider;
+
+#[pymethods]
+impl StaticRegionsProvider {
+    #[new]
+    fn new(regions: Vec<Region>) -> PyResult<(Self, RegionsProvider)> {
+        let mut iter = regions.into_iter();
+        if let Some(region) = iter.next() {
+            let mut provider = qiniu_sdk::http_client::StaticRegionsProvider::new(region.0);
+            provider.extend(iter.map(|r| r.0));
+            Ok((Self, RegionsProvider(Box::new(provider))))
+        } else {
+            Err(QiniuEmptyStaticRegionsProvider::new_err("regions is empty"))
+        }
+    }
 }

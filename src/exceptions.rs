@@ -65,6 +65,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuEmptyChainCredentialsProvider>(),
     )?;
     m.add(
+        "QiniuEmptyStaticRegionsProvider",
+        py.get_type::<QiniuEmptyStaticRegionsProvider>(),
+    )?;
+    m.add(
         "QiniuInvalidServiceNameError",
         py.get_type::<QiniuInvalidServiceNameError>(),
     )?;
@@ -196,6 +200,12 @@ create_exception!(
     QiniuEmptyChainCredentialsProvider,
     PyValueError,
     "七牛空 ChainCredentialsProvider 错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuEmptyStaticRegionsProvider,
+    PyValueError,
+    "七牛空 StaticRegionsProvider 错误"
 );
 create_exception!(
     qiniu_sdk_bindings,

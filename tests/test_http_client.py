@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError
+from qiniu_sdk_bindings import http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyStaticRegionsProvider
 import unittest
 
 
@@ -205,3 +205,35 @@ class TestRegion(unittest.TestCase):
             '192.168.8.1:8080',
             '192.168.8.2:8080',
         ]))
+
+
+class TestStaticRegionsProvider(unittest.TestCase):
+    def test_static_regions_provider(self):
+        r1 = http_client.Region('z0',
+                                s3_region_id='cn-east-1',
+                                up_preferred_endpoints=[
+                                    http_client.Endpoint('192.168.1.1', 8080),
+                                    http_client.Endpoint('192.168.1.2', 8080),
+                                ],
+                                up_alternative_endpoints=[
+                                    http_client.Endpoint('192.168.2.1', 8080),
+                                    http_client.Endpoint('192.168.2.2', 8080),
+                                ])
+        r2 = http_client.Region('z1',
+                                s3_region_id='cn-east-2',
+                                up_preferred_endpoints=[
+                                    http_client.Endpoint('192.168.3.1', 8080),
+                                    http_client.Endpoint('192.168.3.2', 8080),
+                                ],
+                                up_alternative_endpoints=[
+                                    http_client.Endpoint('192.168.3.1', 8080),
+                                    http_client.Endpoint('192.168.3.2', 8080),
+                                ])
+        provider = http_client.StaticRegionsProvider([r1, r2])
+        r = provider.get()
+        self.assertEqual(r, r1)
+        r = provider.get_all()
+        self.assertEqual(r, [r1, r2])
+
+        with self.assertRaises(QiniuEmptyStaticRegionsProvider):
+            http_client.StaticRegionsProvider([])
