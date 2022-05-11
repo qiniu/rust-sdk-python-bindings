@@ -1,4 +1,5 @@
 use crate::{
+    credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuEmptyRegionsProvider, QiniuInvalidDomainWithPortError,
         QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError, QiniuInvalidServiceNameError,
@@ -9,6 +10,7 @@ use pyo3::{prelude::*, pyclass::CompareOp};
 use qiniu_sdk::http_client::{
     DomainWithPortParseError, EndpointParseError, EndpointsGetOptions, IpAddrWithPortParseError,
 };
+use std::{path::PathBuf, time::Duration};
 
 pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<DomainWithPort>()?;
@@ -19,6 +21,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<EndpointsProvider>()?;
     m.add_class::<Region>()?;
     m.add_class::<RegionsProvider>()?;
+    m.add_class::<AllRegionsProvider>()?;
 
     Ok(())
 }
@@ -728,6 +731,140 @@ impl Region {
             CompareOp::Eq => (self.0 == other.0).to_object(py),
             _ => py.NotImplemented(),
         }
+    }
+}
+
+/// 七牛所有区域信息查询器
+#[pyclass(extends = RegionsProvider)]
+#[pyo3(
+    text_signature = "(credential_provider, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+)]
+#[derive(Clone)]
+struct AllRegionsProvider;
+
+#[pymethods]
+impl AllRegionsProvider {
+    #[new]
+    #[args(
+        auto_persistent = "true",
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        credential_provider: CredentialProvider,
+        auto_persistent: bool,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> (Self, RegionsProvider) {
+        let builder = Self::new_builder(
+            credential_provider,
+            use_https,
+            uc_endpoints,
+            cache_lifetime,
+            shrink_interval,
+        );
+        (
+            Self,
+            RegionsProvider(Box::new(
+                builder.default_load_or_create_from(auto_persistent),
+            )),
+        )
+    }
+
+    #[staticmethod]
+    #[pyo3(
+        text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    )]
+    #[args(
+        auto_persistent = "true",
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn load_or_create_from(
+        credential_provider: CredentialProvider,
+        path: PathBuf,
+        auto_persistent: bool,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        let builder = Self::new_builder(
+            credential_provider,
+            use_https,
+            uc_endpoints,
+            cache_lifetime,
+            shrink_interval,
+        );
+        Py::new(
+            py,
+            (
+                Self,
+                RegionsProvider(Box::new(builder.load_or_create_from(path, auto_persistent))),
+            ),
+        )
+    }
+
+    #[staticmethod]
+    #[pyo3(
+        text_signature = "(credential_provider, /, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    )]
+    #[args(
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn in_memory(
+        credential_provider: CredentialProvider,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        let builder = Self::new_builder(
+            credential_provider,
+            use_https,
+            uc_endpoints,
+            cache_lifetime,
+            shrink_interval,
+        );
+        Py::new(py, (Self, RegionsProvider(Box::new(builder.in_memory()))))
+    }
+}
+
+impl AllRegionsProvider {
+    fn new_builder(
+        credential_provider: CredentialProvider,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> qiniu_sdk::http_client::AllRegionsProviderBuilder {
+        let mut builder =
+            qiniu_sdk::http_client::AllRegionsProvider::builder(credential_provider.into_inner());
+        builder = builder.use_https(use_https);
+        if let Some(uc_endpoints) = uc_endpoints {
+            builder = builder.uc_endpoints(uc_endpoints.0);
+        }
+        if let Some(cache_lifetime) = cache_lifetime {
+            builder = builder.cache_lifetime(Duration::from_secs(cache_lifetime));
+        }
+        if let Some(shrink_interval) = shrink_interval {
+            builder = builder.shrink_interval(Duration::from_secs(shrink_interval));
+        }
+        builder
     }
 }
 

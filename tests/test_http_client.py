@@ -1,4 +1,5 @@
-from qiniu_sdk_bindings import http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
+from qiniu_sdk_bindings import credential, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
+from aiohttp import web
 import unittest
 
 
@@ -280,3 +281,269 @@ class TestEndpointsProvider(unittest.TestCase):
                 ['192.168.5.1:8080', '192.168.5.2:8080',
                     '192.168.7.1:8080', '192.168.7.2:8080'],
                 ['192.168.6.1:8080', '192.168.6.2:8080', '192.168.8.1:8080', '192.168.8.2:8080']))
+
+
+class TestAllRegionsProvider(unittest.IsolatedAsyncioTestCase):
+    async def test_all_regions_provider(self):
+        async def handler(request):
+            print('****', request.headers)
+            return web.json_response(regions_response_body(), headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/regions', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            provider = http_client.AllRegionsProvider.in_memory(credential.Credential(
+                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            regions = await provider.async_get_all()
+            self.assertEqual(len(regions), 5)
+            self.assertEqual(regions[0].region_id, 'z0')
+            self.assertEqual(regions[1].region_id, 'z1')
+            self.assertEqual(regions[2].region_id, 'z2')
+            self.assertEqual(regions[3].region_id, 'as0')
+            self.assertEqual(regions[4].region_id, 'na0')
+            region = await provider.async_get()
+            self.assertEqual(region.region_id, 'z0')
+        finally:
+            await runner.cleanup()
+
+
+def regions_response_body():
+    return {
+        "regions": [
+            {
+                "id": "z0",
+                "ttl": 5,
+                "description": "East China",
+                "io": {
+                    "domains": [
+                        "iovip.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload.qiniup.com",
+                        "up.qiniup.com"
+                    ],
+                    "old": [
+                        "upload.qbox.me",
+                        "up.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-z0.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-z0.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-cn-east-1.qiniucs.com"
+                    ],
+                    "region_alias": "cn-east-1"
+                }
+            },
+            {
+                "id": "z1",
+                "ttl": 5,
+                "description": "North China",
+                "io": {
+                    "domains": [
+                        "iovip-z1.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload-z1.qiniup.com",
+                        "up-z1.qiniup.com"
+                    ],
+                    "old": [
+                        "upload-z1.qbox.me",
+                        "up-z1.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-z1.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-z1.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-cn-north-1.qiniucs.com"
+                    ],
+                    "region_alias": "cn-north-1"
+                }
+            },
+            {
+                "id": "z2",
+                "ttl": 5,
+                "description": "South China",
+                "io": {
+                    "domains": [
+                        "iovip-z2.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload-z2.qiniup.com",
+                        "up-z2.qiniup.com"
+                    ],
+                    "old": [
+                        "upload-z2.qbox.me",
+                        "up-z2.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-z2.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-z2.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-cn-south-1.qiniucs.com"
+                    ],
+                    "region_alias": "cn-south-1"
+                }
+            },
+            {
+                "id": "as0",
+                "ttl": 5,
+                "description": "Southeast Asia",
+                "io": {
+                    "domains": [
+                        "iovip-as0.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload-as0.qiniup.com",
+                        "up-as0.qiniup.com"
+                    ],
+                    "old": [
+                        "upload-as0.qbox.me",
+                        "up-as0.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-na0.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-na0.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-ap-southeast-1.qiniucs.com"
+                    ],
+                    "region_alias": "ap-southeast-1"
+                }
+            },
+            {
+                "id": "na0",
+                "ttl": 5,
+                "description": "North America",
+                "io": {
+                    "domains": [
+                        "iovip-na0.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload-na0.qiniup.com",
+                        "up-na0.qiniup.com"
+                    ],
+                    "old": [
+                        "upload-na0.qbox.me",
+                        "up-na0.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-na0.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-na0.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-us-north-1.qiniucs.com"
+                    ],
+                    "region_alias": "us-north-1"
+                }
+            }
+        ]
+    }

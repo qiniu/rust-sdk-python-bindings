@@ -22,7 +22,7 @@ class TestSyncHttpRequest(unittest.TestCase):
         self.assertEqual(req.method, 'GET')
         self.assertEqual(req.headers, {'x-reqid': 'fakereqid'})
         self.assertEqual(req.appended_user_agent, '/python')
-        self.assertTrue('/qiniu-sdk-python-bindings/v' in req.user_agent)
+        self.assertTrue('/qiniu-sdk-python-bindings-' in req.user_agent)
         self.assertTrue(req.user_agent.endswith('/python'))
         self.assertEqual(req.resolved_ip_addrs, [
                          '127.0.0.1', '127.0.0.2'])
@@ -64,7 +64,7 @@ class TestAsyncHttpRequest(unittest.TestCase):
         self.assertEqual(req.method, 'GET')
         self.assertEqual(req.headers, {'x-reqid': 'fakereqid'})
         self.assertEqual(req.appended_user_agent, '/python')
-        self.assertTrue('/qiniu-sdk-python-bindings/v' in req.user_agent)
+        self.assertTrue('/qiniu-sdk-python-bindings-' in req.user_agent)
         self.assertTrue(req.user_agent.endswith('/python'))
         self.assertEqual(req.resolved_ip_addrs, [
                          '127.0.0.1', '127.0.0.2'])

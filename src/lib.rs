@@ -28,7 +28,7 @@ fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         let version = py.version_info();
         qiniu_sdk::http::set_library_user_agent(
             format!(
-                "/qiniu-sdk-python-bindings/v{}/v{}.{}.{}",
+                "/qiniu-sdk-python-bindings-{}/python-{}.{}.{}",
                 env!("CARGO_PKG_VERSION"),
                 version.major,
                 version.minor,
