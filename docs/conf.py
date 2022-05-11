@@ -21,7 +21,7 @@ project = 'qiniu_sdk_bindings'
 copyright = '2022 Qiniu, Ltd. <sdk@qiniu.com>'
 author = 'Bachue Zhou, Qiniu, Ltd.'
 version = '0.1'
-release = '0.1.1'
+release = '0.1.0'
 
 
 # -- General configuration ---------------------------------------------------
