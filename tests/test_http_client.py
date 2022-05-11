@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyStaticRegionsProvider
+from qiniu_sdk_bindings import http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
 import unittest
 
 
@@ -207,8 +207,8 @@ class TestRegion(unittest.TestCase):
         ]))
 
 
-class TestStaticRegionsProvider(unittest.TestCase):
-    def test_static_regions_provider(self):
+class TestRegionsProvider(unittest.TestCase):
+    def test_regions_provider(self):
         r1 = http_client.Region('z0',
                                 s3_region_id='cn-east-1',
                                 up_preferred_endpoints=[
@@ -229,11 +229,54 @@ class TestStaticRegionsProvider(unittest.TestCase):
                                     http_client.Endpoint('192.168.3.1', 8080),
                                     http_client.Endpoint('192.168.3.2', 8080),
                                 ])
-        provider = http_client.StaticRegionsProvider([r1, r2])
+        provider = http_client.RegionsProvider([r1, r2])
         r = provider.get()
         self.assertEqual(r, r1)
         r = provider.get_all()
         self.assertEqual(r, [r1, r2])
 
-        with self.assertRaises(QiniuEmptyStaticRegionsProvider):
-            http_client.StaticRegionsProvider([])
+        with self.assertRaises(QiniuEmptyRegionsProvider):
+            http_client.RegionsProvider([])
+
+
+class TestEndpointsProvider(unittest.TestCase):
+    def test_endpoints_provider(self):
+        r = http_client.Region('z0',
+                               s3_region_id='cn-east-1',
+                               up_preferred_endpoints=[
+                                   http_client.Endpoint('192.168.1.1', 8080),
+                                   http_client.Endpoint('192.168.1.2', 8080),
+                               ],
+                               up_alternative_endpoints=[
+                                   http_client.Endpoint('192.168.2.1', 8080),
+                                   http_client.Endpoint('192.168.2.2', 8080),
+                               ],
+                               io_preferred_endpoints=[
+                                   http_client.Endpoint('192.168.3.1', 8080),
+                                   http_client.Endpoint('192.168.3.2', 8080),
+                               ],
+                               io_alternative_endpoints=[
+                                   http_client.Endpoint('192.168.4.1', 8080),
+                                   http_client.Endpoint('192.168.4.2', 8080),
+                               ],
+                               rs_preferred_endpoints=[
+                                   '192.168.5.1:8080', '192.168.5.2:8080'],
+                               rs_alternative_endpoints=[
+                                   '192.168.6.1:8080', '192.168.6.2:8080'
+                               ],
+                               rsf_preferred_endpoints=[
+                                   ('192.168.7.1', 8080), ('192.168.7.2', 8080)],
+                               rsf_alternative_endpoints=[
+                                   ('192.168.8.1', 8080), ('192.168.8.2', 8080)])
+        e = http_client.EndpointsProvider(r)
+        self.assertEqual(e.get_endpoints(
+            service_names=[http_client.ServiceName.Up]),
+            http_client.Endpoints(
+                ['192.168.1.1:8080', '192.168.1.2:8080'],
+                ['192.168.2.1:8080', '192.168.2.2:8080']))
+        self.assertEqual(e.get_endpoints(
+            service_names=[http_client.ServiceName.Rs, http_client.ServiceName.Rsf]),
+            http_client.Endpoints(
+                ['192.168.5.1:8080', '192.168.5.2:8080',
+                    '192.168.7.1:8080', '192.168.7.2:8080'],
+                ['192.168.6.1:8080', '192.168.6.2:8080', '192.168.8.1:8080', '192.168.8.2:8080']))
