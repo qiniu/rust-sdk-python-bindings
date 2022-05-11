@@ -5,7 +5,7 @@ use crate::{
     },
     utils::extract_endpoints,
 };
-use pyo3::{prelude::*, pyclass::CompareOp, types::PyDict};
+use pyo3::{prelude::*, pyclass::CompareOp};
 use qiniu_sdk::http_client::{
     DomainWithPortParseError, EndpointParseError, EndpointsGetOptions, IpAddrWithPortParseError,
 };
@@ -341,8 +341,8 @@ impl Endpoints {
     #[new]
     #[args(alternative_endpoints = "None")]
     fn new(
-        preferred_endpoints: &PyAny,
-        alternative_endpoints: Option<&PyAny>,
+        preferred_endpoints: Vec<&PyAny>,
+        alternative_endpoints: Option<Vec<&PyAny>>,
     ) -> PyResult<(Self, EndpointsProvider)> {
         let mut builder = qiniu_sdk::http_client::EndpointsBuilder::default();
         builder.add_preferred_endpoints(extract_endpoints(preferred_endpoints)?);
@@ -462,62 +462,96 @@ impl RegionsProvider {
 ///
 /// 提供七牛不同服务的终端地址列表
 #[pyclass(extends = RegionsProvider)]
-#[pyo3(text_signature = "(region_id, **opts)")]
+#[pyo3(
+    text_signature = "(region_id, /, s3_region_id = None, up_preferred_endpoints = None, up_alternative_endpoints = None, io_preferred_endpoints = None, io_alternative_endpoints = None, uc_preferred_endpoints = None, uc_preferred_endpoints = None, rs_preferred_endpoints = None, rs_alternative_endpoints = None, rsf_preferred_endpoints = None, rsf_alternative_endpoints = None, s3_preferred_endpoints = None, s3_alternative_endpoints = None, api_preferred_endpoints = None, api_alternative_endpoints = None)"
+)]
 #[derive(Clone)]
 struct Region(qiniu_sdk::http_client::Region);
 
 #[pymethods]
 impl Region {
     #[new]
-    #[args(opts = "**")]
-    fn new(region_id: String, opts: Option<&PyDict>) -> PyResult<(Self, RegionsProvider)> {
+    #[args(
+        s3_region_id = "None",
+        up_preferred_endpoints = "None",
+        up_alternative_endpoints = "None",
+        io_preferred_endpoints = "None",
+        io_alternative_endpoints = "None",
+        uc_preferred_endpoints = "None",
+        uc_preferred_endpoints = "None",
+        rs_preferred_endpoints = "None",
+        rs_alternative_endpoints = "None",
+        rsf_preferred_endpoints = "None",
+        rsf_alternative_endpoints = "None",
+        s3_preferred_endpoints = "None",
+        s3_alternative_endpoints = "None",
+        api_preferred_endpoints = "None",
+        api_alternative_endpoints = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        region_id: String,
+        s3_region_id: Option<String>,
+        up_preferred_endpoints: Option<Vec<&PyAny>>,
+        up_alternative_endpoints: Option<Vec<&PyAny>>,
+        io_preferred_endpoints: Option<Vec<&PyAny>>,
+        io_alternative_endpoints: Option<Vec<&PyAny>>,
+        uc_preferred_endpoints: Option<Vec<&PyAny>>,
+        uc_alternative_endpoints: Option<Vec<&PyAny>>,
+        rs_preferred_endpoints: Option<Vec<&PyAny>>,
+        rs_alternative_endpoints: Option<Vec<&PyAny>>,
+        rsf_preferred_endpoints: Option<Vec<&PyAny>>,
+        rsf_alternative_endpoints: Option<Vec<&PyAny>>,
+        s3_preferred_endpoints: Option<Vec<&PyAny>>,
+        s3_alternative_endpoints: Option<Vec<&PyAny>>,
+        api_preferred_endpoints: Option<Vec<&PyAny>>,
+        api_alternative_endpoints: Option<Vec<&PyAny>>,
+    ) -> PyResult<(Self, RegionsProvider)> {
         let mut builder = qiniu_sdk::http_client::Region::builder(region_id);
-        if let Some(opts) = opts {
-            if let Some(s3_region_id) = opts.get_item("s3_region_id") {
-                builder.s3_region_id(s3_region_id.extract::<String>()?);
-            }
-            if let Some(endpoints) = opts.get_item("up_preferred_endpoints") {
-                builder.add_up_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("up_alternative_endpoints") {
-                builder.add_up_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("io_preferred_endpoints") {
-                builder.add_io_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("io_alternative_endpoints") {
-                builder.add_io_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("uc_preferred_endpoints") {
-                builder.add_uc_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("uc_alternative_endpoints") {
-                builder.add_uc_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("rs_preferred_endpoints") {
-                builder.add_rs_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("rs_alternative_endpoints") {
-                builder.add_rs_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("rsf_preferred_endpoints") {
-                builder.add_rsf_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("rsf_alternative_endpoints") {
-                builder.add_rsf_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("s3_preferred_endpoints") {
-                builder.add_s3_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("s3_alternative_endpoints") {
-                builder.add_s3_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("api_preferred_endpoints") {
-                builder.add_api_preferred_endpoints(extract_endpoints(endpoints)?);
-            }
-            if let Some(endpoints) = opts.get_item("api_alternative_endpoints") {
-                builder.add_api_alternative_endpoints(extract_endpoints(endpoints)?);
-            }
+        if let Some(s3_region_id) = s3_region_id {
+            builder.s3_region_id(s3_region_id);
+        }
+        if let Some(endpoints) = up_preferred_endpoints {
+            builder.add_up_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = up_alternative_endpoints {
+            builder.add_up_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = io_preferred_endpoints {
+            builder.add_io_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = io_alternative_endpoints {
+            builder.add_io_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = uc_preferred_endpoints {
+            builder.add_uc_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = uc_alternative_endpoints {
+            builder.add_uc_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = rs_preferred_endpoints {
+            builder.add_rs_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = rs_alternative_endpoints {
+            builder.add_rs_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = rsf_preferred_endpoints {
+            builder.add_rsf_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = rsf_alternative_endpoints {
+            builder.add_rsf_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = s3_preferred_endpoints {
+            builder.add_s3_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = s3_alternative_endpoints {
+            builder.add_s3_alternative_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = api_preferred_endpoints {
+            builder.add_api_preferred_endpoints(extract_endpoints(endpoints)?);
+        }
+        if let Some(endpoints) = api_alternative_endpoints {
+            builder.add_api_alternative_endpoints(extract_endpoints(endpoints)?);
         }
         let region = builder.build();
         Ok((Self(region.to_owned()), RegionsProvider(Box::new(region))))

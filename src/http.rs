@@ -6,10 +6,8 @@ use super::{
     },
     utils::{
         convert_headers_to_hashmap, extract_async_request_body, extract_async_response_body,
-        extract_headers, extract_ip_addr, extract_ip_addrs, extract_method, extract_metrics,
-        extract_port, extract_status_code, extract_sync_request_body, extract_sync_response_body,
-        extract_uri, extract_version, parse_headers, parse_ip_addrs, parse_method,
-        parse_status_code, parse_uri, PythonIoBase,
+        extract_sync_request_body, extract_sync_response_body, parse_headers, parse_ip_addr,
+        parse_ip_addrs, parse_method, parse_port, parse_status_code, parse_uri, PythonIoBase,
     },
 };
 use futures::lock::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
@@ -17,7 +15,7 @@ use futures::AsyncReadExt;
 use pyo3::{
     exceptions::{PyIOError, PyNotImplementedError},
     prelude::*,
-    types::{PyBytes, PyDict},
+    types::PyBytes,
 };
 use qiniu_sdk::http::{Method, Uri};
 use std::{
@@ -259,17 +257,57 @@ impl AsyncHttpRequestBuilder {
 ///
 /// 封装 HTTP 请求相关字段
 #[pyclass]
-#[pyo3(text_signature = "(**fields)")]
+#[pyo3(
+    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None)"
+)]
 struct SyncHttpRequest(qiniu_sdk::http::SyncRequest<'static>);
 
 #[pymethods]
 impl SyncHttpRequest {
     #[new]
-    #[args(fields = "**")]
-    fn new(fields: Option<&PyDict>, py: Python<'_>) -> PyResult<Self> {
+    #[args(
+        url = "None",
+        method = "None",
+        version = "None",
+        headers = "None",
+        appended_user_agent = "None",
+        resolved_ip_addrs = "None",
+        body = "None",
+        body_len = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        url: Option<&str>,
+        method: Option<&str>,
+        version: Option<Version>,
+        headers: Option<HashMap<String, String>>,
+        appended_user_agent: Option<&str>,
+        resolved_ip_addrs: Option<Vec<String>>,
+        body: Option<PyObject>,
+        body_len: Option<u64>,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::SyncRequest::builder();
-        if let Some(fields) = fields {
-            Self::set_builder_from_py_dict(&mut builder, fields, py)?;
+        if let Some(url) = url {
+            builder.url(parse_uri(url)?);
+        }
+        if let Some(method) = method {
+            builder.method(parse_method(method)?);
+        }
+        if let Some(version) = version {
+            builder.version(version.into());
+        }
+        if let Some(headers) = headers {
+            builder.headers(parse_headers(headers)?);
+        }
+        if let Some(appended_user_agent) = appended_user_agent {
+            builder.appended_user_agent(appended_user_agent);
+        }
+        if let Some(resolved_ip_addrs) = resolved_ip_addrs {
+            builder.resolved_ip_addrs(parse_ip_addrs(resolved_ip_addrs)?);
+        }
+        if let Some(body) = body {
+            builder.body(extract_sync_request_body(body, body_len, py)?);
         }
         Ok(Self(builder.build()))
     }
@@ -379,63 +417,62 @@ impl SyncHttpRequest {
     // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
 }
 
-impl SyncHttpRequest {
-    fn set_builder_from_py_dict(
-        builder: &mut qiniu_sdk::http::SyncRequestBuilder<'static>,
-        fields: &PyDict,
-        py: Python<'_>,
-    ) -> PyResult<()> {
-        if let Some(url) = fields.get_item("url") {
-            let url = extract_uri(url)?;
-            builder.url(url);
-        }
-        if let Some(method) = fields.get_item("method") {
-            let method = extract_method(method)?;
-            builder.method(method);
-        }
-        if let Some(version) = fields.get_item("version") {
-            let version = extract_version(version)?;
-            builder.version(version);
-        }
-        if let Some(headers) = fields.get_item("headers") {
-            let headers = extract_headers(headers)?;
-            builder.headers(headers);
-        }
-        if let Some(appended_user_agent) = fields.get_item("appended_user_agent") {
-            builder.appended_user_agent(appended_user_agent.extract::<&str>()?);
-        }
-        if let Some(resolved_ip_addrs) = fields.get_item("resolved_ip_addrs") {
-            let resolved_ip_addrs = extract_ip_addrs(resolved_ip_addrs)?;
-            builder.resolved_ip_addrs(resolved_ip_addrs);
-        }
-        if let Some(body) = fields.get_item("body") {
-            let body = extract_sync_request_body(
-                body.to_object(py),
-                fields.get_item("body_len").map(|f| f.to_object(py)),
-                py,
-            )?;
-            builder.body(body);
-        }
-        Ok(())
-    }
-}
-
 /// 异步 HTTP 请求
 ///
 /// 封装 HTTP 请求相关字段
 #[pyclass]
 #[derive(Clone)]
-#[pyo3(text_signature = "(**fields)")]
+#[pyo3(
+    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None)"
+)]
 struct AsyncHttpRequest(Arc<AsyncMutex<qiniu_sdk::http::AsyncRequest<'static>>>);
 
 #[pymethods]
 impl AsyncHttpRequest {
     #[new]
-    #[args(fields = "**")]
-    fn new(fields: Option<&PyDict>, py: Python<'_>) -> PyResult<Self> {
+    #[args(
+        url = "None",
+        method = "None",
+        version = "None",
+        headers = "None",
+        appended_user_agent = "None",
+        resolved_ip_addrs = "None",
+        body = "None",
+        body_len = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        url: Option<&str>,
+        method: Option<&str>,
+        version: Option<Version>,
+        headers: Option<HashMap<String, String>>,
+        appended_user_agent: Option<&str>,
+        resolved_ip_addrs: Option<Vec<String>>,
+        body: Option<PyObject>,
+        body_len: Option<u64>,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::AsyncRequest::builder();
-        if let Some(fields) = fields {
-            Self::set_builder_from_py_dict(&mut builder, fields, py)?;
+        if let Some(url) = url {
+            builder.url(parse_uri(url)?);
+        }
+        if let Some(method) = method {
+            builder.method(parse_method(method)?);
+        }
+        if let Some(version) = version {
+            builder.version(version.into());
+        }
+        if let Some(headers) = headers {
+            builder.headers(parse_headers(headers)?);
+        }
+        if let Some(appended_user_agent) = appended_user_agent {
+            builder.appended_user_agent(appended_user_agent);
+        }
+        if let Some(resolved_ip_addrs) = resolved_ip_addrs {
+            builder.resolved_ip_addrs(parse_ip_addrs(resolved_ip_addrs)?);
+        }
+        if let Some(body) = body {
+            builder.body(extract_async_request_body(body, body_len, py)?);
         }
         Ok(Self(Arc::new(AsyncMutex::new(builder.build()))))
     }
@@ -556,45 +593,6 @@ impl AsyncHttpRequest {
             Ok,
         )
     }
-
-    fn set_builder_from_py_dict(
-        builder: &mut qiniu_sdk::http::AsyncRequestBuilder<'static>,
-        fields: &PyDict,
-        py: Python<'_>,
-    ) -> PyResult<()> {
-        if let Some(url) = fields.get_item("url") {
-            let url = extract_uri(url)?;
-            builder.url(url);
-        }
-        if let Some(method) = fields.get_item("method") {
-            let method = extract_method(method)?;
-            builder.method(method);
-        }
-        if let Some(version) = fields.get_item("version") {
-            let version = extract_version(version)?;
-            builder.version(version);
-        }
-        if let Some(headers) = fields.get_item("headers") {
-            let headers = extract_headers(headers)?;
-            builder.headers(headers);
-        }
-        if let Some(appended_user_agent) = fields.get_item("appended_user_agent") {
-            builder.appended_user_agent(appended_user_agent.extract::<&str>()?);
-        }
-        if let Some(resolved_ip_addrs) = fields.get_item("resolved_ip_addrs") {
-            let resolved_ip_addrs = extract_ip_addrs(resolved_ip_addrs)?;
-            builder.resolved_ip_addrs(resolved_ip_addrs);
-        }
-        if let Some(body) = fields.get_item("body") {
-            let body = extract_async_request_body(
-                body.to_object(py),
-                fields.get_item("body_len").map(|f| f.to_object(py)),
-                py,
-            )?;
-            builder.body(body);
-        }
-        Ok(())
-    }
 }
 
 /// HTTP 版本
@@ -647,44 +645,51 @@ impl From<Version> for qiniu_sdk::http::Version {
 /// HTTP 响应的指标信息
 #[pyclass]
 #[derive(Clone)]
-#[pyo3(text_signature = "(**opts)")]
+#[pyo3(
+    text_signature = "(/, total_duration = None, name_lookup_duration = None, connect_duration = None, secure_connect_duration = None, redirect_duration = None, transfer_duration = None)"
+)]
 pub(super) struct Metrics(qiniu_sdk::http::Metrics);
 
 #[pymethods]
 impl Metrics {
     #[new]
-    #[args(opts = "**")]
-    fn new(opts: Option<PyObject>, py: Python<'_>) -> PyResult<Self> {
+    #[args(
+        total_duration = "None",
+        name_lookup_duration = "None",
+        connect_duration = "None",
+        secure_connect_duration = "None",
+        redirect_duration = "None",
+        transfer_duration = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        total_duration: Option<u64>,
+        name_lookup_duration: Option<u64>,
+        connect_duration: Option<u64>,
+        secure_connect_duration: Option<u64>,
+        redirect_duration: Option<u64>,
+        transfer_duration: Option<u64>,
+    ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::MetricsBuilder::default();
-        if let Some(opts) = opts {
-            if let Some(duration) = parse_duration(opts.as_ref(py), "total_duration")? {
-                builder.total_duration(duration);
-            }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "name_lookup_duration")? {
-                builder.name_lookup_duration(duration);
-            }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "connect_duration")? {
-                builder.connect_duration(duration);
-            }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "secure_connect_duration")? {
-                builder.secure_connect_duration(duration);
-            }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "redirect_duration")? {
-                builder.redirect_duration(duration);
-            }
-            if let Some(duration) = parse_duration(opts.as_ref(py), "transfer_duration")? {
-                builder.transfer_duration(duration);
-            }
+        if let Some(duration) = total_duration {
+            builder.total_duration(Duration::from_nanos(duration));
         }
-        return Ok(Self(builder.build()));
-
-        fn parse_duration(opts: &PyAny, item_name: &str) -> PyResult<Option<Duration>> {
-            if let Ok(duration) = opts.get_item(item_name) {
-                Ok(Some(Duration::from_nanos(duration.extract::<u64>()?)))
-            } else {
-                Ok(None)
-            }
+        if let Some(duration) = name_lookup_duration {
+            builder.name_lookup_duration(Duration::from_nanos(duration));
         }
+        if let Some(duration) = connect_duration {
+            builder.connect_duration(Duration::from_nanos(duration));
+        }
+        if let Some(duration) = secure_connect_duration {
+            builder.secure_connect_duration(Duration::from_nanos(duration));
+        }
+        if let Some(duration) = redirect_duration {
+            builder.redirect_duration(Duration::from_nanos(duration));
+        }
+        if let Some(duration) = transfer_duration {
+            builder.transfer_duration(Duration::from_nanos(duration));
+        }
+        Ok(Self(builder.build()))
     }
 
     /// 获取总体请求耗时
@@ -775,12 +780,6 @@ impl Metrics {
 
     fn __str__(&self) -> String {
         self.__repr__()
-    }
-}
-
-impl Metrics {
-    pub(super) fn into_inner(self) -> qiniu_sdk::http::Metrics {
-        self.0
     }
 }
 
@@ -956,45 +955,55 @@ macro_rules! impl_response_body {
 ///
 /// 封装 HTTP 响应相关字段
 #[pyclass(extends = ResponseParts)]
-#[pyo3(text_signature = "(**fields)")]
+#[pyo3(
+    text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
+)]
 struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
 
 #[pymethods]
 impl SyncHttpResponse {
     #[new]
-    #[args(opts = "**")]
+    #[args(
+        status_code = "None",
+        headers = "None",
+        version = "None",
+        server_ip = "None",
+        server_port = "None",
+        body = "None",
+        metrics = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        opts: Option<PyObject>,
+        status_code: Option<u16>,
+        headers: Option<HashMap<String, String>>,
+        version: Option<Version>,
+        server_ip: Option<&str>,
+        server_port: Option<u16>,
+        body: Option<PyObject>,
+        metrics: Option<Metrics>,
         py: Python<'_>,
     ) -> PyResult<(SyncHttpResponse, ResponseParts)> {
         let mut builder = qiniu_sdk::http::Response::builder();
-        if let Some(opts) = opts {
-            if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
-                let status_code = extract_status_code(status_code)?;
-                builder.status_code(status_code);
-            }
-            if let Ok(headers) = opts.as_ref(py).get_item("headers") {
-                let headers = extract_headers(headers)?;
-                builder.headers(headers);
-            }
-            if let Ok(version) = opts.as_ref(py).get_item("version") {
-                let version = extract_version(version)?;
-                builder.version(version);
-            }
-            if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
-                let server_ip = extract_ip_addr(server_ip)?;
-                builder.server_ip(server_ip);
-            }
-            if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
-                let server_port = extract_port(server_port)?;
-                builder.server_port(server_port);
-            }
-            if let Ok(body) = opts.as_ref(py).get_item("body") {
-                builder.body(extract_sync_response_body(body.to_object(py), py));
-            }
-            if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
-                builder.metrics(extract_metrics(metrics)?);
-            }
+        if let Some(status_code) = status_code {
+            builder.status_code(parse_status_code(status_code)?);
+        }
+        if let Some(headers) = headers {
+            builder.headers(parse_headers(headers)?);
+        }
+        if let Some(version) = version {
+            builder.version(version.into());
+        }
+        if let Some(server_ip) = server_ip {
+            builder.server_ip(parse_ip_addr(server_ip)?);
+        }
+        if let Some(server_port) = server_port {
+            builder.server_port(parse_port(server_port)?);
+        }
+        if let Some(body) = body {
+            builder.body(extract_sync_response_body(body, py));
+        }
+        if let Some(metrics) = metrics {
+            builder.metrics(metrics.0);
         }
         let (parts, body) = builder.build().into_parts_and_body();
         Ok((Self(body), ResponseParts(parts)))
@@ -1036,45 +1045,55 @@ impl_response_body!(SyncHttpResponse);
 ///
 /// 封装 HTTP 响应相关字段
 #[pyclass(extends = ResponseParts)]
-#[pyo3(text_signature = "(**fields)")]
+#[pyo3(
+    text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
+)]
 struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
 
 #[pymethods]
 impl AsyncHttpResponse {
     #[new]
-    #[args(opts = "**")]
+    #[args(
+        status_code = "None",
+        headers = "None",
+        version = "None",
+        server_ip = "None",
+        server_port = "None",
+        body = "None",
+        metrics = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        opts: Option<PyObject>,
+        status_code: Option<u16>,
+        headers: Option<HashMap<String, String>>,
+        version: Option<Version>,
+        server_ip: Option<&str>,
+        server_port: Option<u16>,
+        body: Option<PyObject>,
+        metrics: Option<Metrics>,
         py: Python<'_>,
     ) -> PyResult<(AsyncHttpResponse, ResponseParts)> {
         let mut builder = qiniu_sdk::http::Response::builder();
-        if let Some(opts) = opts {
-            if let Ok(status_code) = opts.as_ref(py).get_item("status_code") {
-                let status_code = extract_status_code(status_code)?;
-                builder.status_code(status_code);
-            }
-            if let Ok(headers) = opts.as_ref(py).get_item("headers") {
-                let headers = extract_headers(headers)?;
-                builder.headers(headers);
-            }
-            if let Ok(version) = opts.as_ref(py).get_item("version") {
-                let version = extract_version(version)?;
-                builder.version(version);
-            }
-            if let Ok(server_ip) = opts.as_ref(py).get_item("server_ip") {
-                let server_ip = extract_ip_addr(server_ip)?;
-                builder.server_ip(server_ip);
-            }
-            if let Ok(server_port) = opts.as_ref(py).get_item("server_port") {
-                let server_port = extract_port(server_port)?;
-                builder.server_port(server_port);
-            }
-            if let Ok(body) = opts.as_ref(py).get_item("body") {
-                builder.body(extract_async_response_body(body.to_object(py), py));
-            }
-            if let Ok(metrics) = opts.as_ref(py).get_item("metrics") {
-                builder.metrics(extract_metrics(metrics)?);
-            }
+        if let Some(status_code) = status_code {
+            builder.status_code(parse_status_code(status_code)?);
+        }
+        if let Some(headers) = headers {
+            builder.headers(parse_headers(headers)?);
+        }
+        if let Some(version) = version {
+            builder.version(version.into());
+        }
+        if let Some(server_ip) = server_ip {
+            builder.server_ip(parse_ip_addr(server_ip)?);
+        }
+        if let Some(server_port) = server_port {
+            builder.server_port(parse_port(server_port)?);
+        }
+        if let Some(body) = body {
+            builder.body(extract_async_response_body(body, py));
+        }
+        if let Some(metrics) = metrics {
+            builder.metrics(metrics.0);
         }
         let (parts, body) = builder.build().into_parts_and_body();
         Ok((Self(Arc::new(AsyncMutex::new(body))), ResponseParts(parts)))

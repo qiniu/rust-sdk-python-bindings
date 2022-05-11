@@ -11,7 +11,7 @@ use pyo3::{prelude::*, types::PyTuple};
 use qiniu_sdk::{
     http::{
         header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName,
-        HeaderValue, Method, Metrics, StatusCode, SyncRequestBody, SyncResponseBody, Uri, Version,
+        HeaderValue, Method, StatusCode, SyncRequestBody, SyncResponseBody, Uri,
     },
     http_client::EndpointParseError,
 };
@@ -263,10 +263,6 @@ fn make_io_error_from_py_err(err: PyErr) -> IoError {
     IoError::new(IoErrorKind::Other, err)
 }
 
-pub(super) fn extract_uri(url: &PyAny) -> PyResult<Uri> {
-    parse_uri(url.extract::<&str>()?)
-}
-
 pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
     let url = url
         .parse::<Uri>()
@@ -274,23 +270,11 @@ pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
     Ok(url)
 }
 
-pub(super) fn extract_method(method: &PyAny) -> PyResult<Method> {
-    parse_method(method.extract::<&str>()?)
-}
-
 pub(super) fn parse_method(method: &str) -> PyResult<Method> {
     let method = method
         .parse::<Method>()
         .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
     Ok(method)
-}
-
-pub(super) fn extract_version(version: &PyAny) -> PyResult<Version> {
-    Ok(version.extract::<super::http::Version>()?.into())
-}
-
-pub(super) fn extract_headers(headers: &PyAny) -> PyResult<HeaderMap> {
-    parse_headers(headers.extract::<HashMap<String, String>>()?)
 }
 
 pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
@@ -331,10 +315,6 @@ pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<
     }
 }
 
-pub(super) fn extract_ip_addrs(ip_addrs: &PyAny) -> PyResult<Vec<IpAddr>> {
-    parse_ip_addrs(ip_addrs.extract::<Vec<String>>()?)
-}
-
 pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
     ip_addrs
         .into_iter()
@@ -344,10 +324,6 @@ pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
                 .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
         })
         .collect()
-}
-
-pub(super) fn extract_port(port: &PyAny) -> PyResult<NonZeroU16> {
-    parse_port(port.extract::<u16>()?)
 }
 
 pub(super) fn parse_port(port: u16) -> PyResult<NonZeroU16> {
@@ -360,7 +336,7 @@ pub(super) fn parse_port(port: u16) -> PyResult<NonZeroU16> {
 
 pub(super) fn extract_sync_request_body(
     body: PyObject,
-    body_len: Option<PyObject>,
+    body_len: Option<u64>,
     py: Python<'_>,
 ) -> PyResult<SyncRequestBody<'static>> {
     if let Ok(body) = body.extract::<String>(py) {
@@ -370,7 +346,7 @@ pub(super) fn extract_sync_request_body(
     } else if let Some(body_len) = body_len {
         Ok(SyncRequestBody::from_reader(
             PythonIoBase::new(body),
-            body_len.extract::<u64>(py)?,
+            body_len,
         ))
     } else {
         Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
@@ -379,7 +355,7 @@ pub(super) fn extract_sync_request_body(
 
 pub(super) fn extract_async_request_body(
     body: PyObject,
-    body_len: Option<PyObject>,
+    body_len: Option<u64>,
     py: Python<'_>,
 ) -> PyResult<AsyncRequestBody<'static>> {
     if let Ok(body) = body.extract::<String>(py) {
@@ -389,7 +365,7 @@ pub(super) fn extract_async_request_body(
     } else if let Some(body_len) = body_len {
         Ok(AsyncRequestBody::from_reader(
             PythonIoBase::new(body).into_async_read(),
-            body_len.extract::<u64>(py)?,
+            body_len,
         ))
     } else {
         Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
@@ -416,17 +392,9 @@ pub(super) fn extract_async_response_body(body: PyObject, py: Python<'_>) -> Asy
     }
 }
 
-pub(super) fn extract_status_code(status_code: &PyAny) -> PyResult<StatusCode> {
-    parse_status_code(status_code.extract::<u16>()?)
-}
-
 pub(super) fn parse_status_code(status_code: u16) -> PyResult<StatusCode> {
     StatusCode::from_u16(status_code)
         .map_err(|err| QiniuInvalidStatusCodeError::new_err(err.to_string()))
-}
-
-pub(super) fn extract_ip_addr(ip_addr: &PyAny) -> PyResult<IpAddr> {
-    parse_ip_addr(ip_addr.extract::<&str>()?)
 }
 
 pub(super) fn parse_ip_addr(ip_addr: &str) -> PyResult<IpAddr> {
@@ -435,20 +403,10 @@ pub(super) fn parse_ip_addr(ip_addr: &str) -> PyResult<IpAddr> {
         .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
 }
 
-pub(super) fn extract_metrics(metrics: &PyAny) -> PyResult<Metrics> {
-    metrics
-        .extract::<super::http::Metrics>()
-        .map(|m| m.into_inner())
-}
-
 pub(super) fn extract_endpoints(
-    endpoints: &PyAny,
+    endpoints: Vec<&PyAny>,
 ) -> PyResult<Vec<qiniu_sdk::http_client::Endpoint>> {
-    endpoints
-        .extract::<Vec<&PyAny>>()?
-        .into_iter()
-        .map(extract_endpoint)
-        .collect()
+    endpoints.into_iter().map(extract_endpoint).collect()
 }
 
 pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_client::Endpoint> {

@@ -780,28 +780,28 @@ impl FromUploadPolicy {
 ///
 /// 根据存储空间的快速生成上传凭证实例
 #[pyclass(extends = UploadTokenProvider)]
-#[pyo3(text_signature = "(bucket, upload_token_lifetime, credential, **opts)")]
+#[pyo3(
+    text_signature = "(bucket, upload_token_lifetime, credential, /, on_policy_generated = None)"
+)]
 struct BucketUploadTokenProvider;
 
 #[pymethods]
 impl BucketUploadTokenProvider {
     #[new]
-    #[args(opts = "**")]
+    #[args(on_policy_generated = "None")]
     fn new(
         bucket: &str,
         upload_token_lifetime: u64,
         credential: CredentialProvider,
-        opts: Option<&PyDict>,
+        on_policy_generated: Option<&PyAny>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::BucketUploadTokenProvider::builder(
             bucket,
             Duration::from_secs(upload_token_lifetime),
             credential.into_inner(),
         );
-        if let Some(opts) = opts {
-            if let Some(any) = opts.get_item("on_policy_generated") {
-                builder = set_on_policy_generated_to_builder(builder, any);
-            }
+        if let Some(on_policy_generated) = on_policy_generated {
+            builder = set_on_policy_generated_to_builder(builder, on_policy_generated);
         }
         let provider = builder.build();
         return (Self, UploadTokenProvider(Box::new(provider)));
@@ -833,19 +833,21 @@ impl BucketUploadTokenProvider {
 ///
 /// 根据对象的快速生成上传凭证实例
 #[pyclass(extends = UploadTokenProvider)]
-#[pyo3(text_signature = "(bucket, object, upload_token_lifetime, credential, **opts)")]
+#[pyo3(
+    text_signature = "(bucket, object, upload_token_lifetime, credential, /, on_policy_generated = None)"
+)]
 struct ObjectUploadTokenProvider;
 
 #[pymethods]
 impl ObjectUploadTokenProvider {
     #[new]
-    #[args(opts = "**")]
+    #[args(on_policy_generated = "None")]
     fn new(
         bucket: &str,
         object: &str,
         upload_token_lifetime: u64,
         credential: CredentialProvider,
-        opts: Option<&PyDict>,
+        on_policy_generated: Option<&PyAny>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::ObjectUploadTokenProvider::builder(
             bucket,
@@ -853,10 +855,8 @@ impl ObjectUploadTokenProvider {
             Duration::from_secs(upload_token_lifetime),
             credential.into_inner(),
         );
-        if let Some(opts) = opts {
-            if let Some(any) = opts.get_item("on_policy_generated") {
-                builder = set_on_policy_generated_to_builder(builder, any);
-            }
+        if let Some(on_policy_generated) = on_policy_generated {
+            builder = set_on_policy_generated_to_builder(builder, on_policy_generated);
         }
         let provider = builder.build();
         return (Self, UploadTokenProvider(Box::new(provider)));
