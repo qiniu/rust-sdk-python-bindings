@@ -200,7 +200,7 @@ macro_rules! impl_http_request_builder {
 /// 数据传输进度信息
 #[pyclass]
 #[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct TransferProgressInfo {
     transferred_bytes: u64,
     total_bytes: u64,
@@ -230,6 +230,14 @@ impl TransferProgressInfo {
     #[getter]
     fn get_total_bytes(&self) -> u64 {
         self.total_bytes
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }
 
