@@ -19,8 +19,15 @@ use pyo3::{
 };
 use qiniu_sdk::http::{Method, Uri};
 use std::{
-    borrow::Cow, collections::HashMap, convert::TryInto, io::Read, net::IpAddr, num::NonZeroU16,
-    sync::Arc, time::Duration,
+    borrow::Cow,
+    collections::HashMap,
+    convert::TryInto,
+    io::Read,
+    net::IpAddr,
+    num::NonZeroU16,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+    time::Duration,
 };
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
@@ -332,7 +339,7 @@ impl AsyncHttpRequestBuilder {
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
 )]
-struct SyncHttpRequest(qiniu_sdk::http::SyncRequest<'static>);
+pub(super) struct SyncHttpRequest(qiniu_sdk::http::SyncRequest<'static>);
 
 #[pymethods]
 impl SyncHttpRequest {
@@ -523,6 +530,20 @@ impl SyncHttpRequest {
     }
 }
 
+impl Deref for SyncHttpRequest {
+    type Target = qiniu_sdk::http::SyncRequest<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SyncHttpRequest {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// 异步 HTTP 请求
 ///
 /// 封装 HTTP 请求相关字段
@@ -531,7 +552,7 @@ impl SyncHttpRequest {
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None)"
 )]
-struct AsyncHttpRequest(Arc<AsyncMutex<qiniu_sdk::http::AsyncRequest<'static>>>);
+pub(super) struct AsyncHttpRequest(Arc<AsyncMutex<qiniu_sdk::http::AsyncRequest<'static>>>);
 
 #[pymethods]
 impl AsyncHttpRequest {
@@ -712,7 +733,9 @@ impl AsyncHttpRequest {
 }
 
 impl AsyncHttpRequest {
-    fn lock(&self) -> PyResult<AsyncMutexGuard<'_, qiniu_sdk::http::AsyncRequest<'static>>> {
+    pub(super) fn lock(
+        &self,
+    ) -> PyResult<AsyncMutexGuard<'_, qiniu_sdk::http::AsyncRequest<'static>>> {
         self.0.try_lock().map_or_else(
             || Err(QiniuDataLockedError::new_err("AsyncHttpRequest is locked")),
             Ok,

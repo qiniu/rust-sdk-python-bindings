@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import credential, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
+from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
 from aiohttp import web
 import unittest
 
@@ -689,3 +689,20 @@ def query_response_body():
 
 def domains_response_body():
     return ["fakedomain.1.com", "fakedomain.2.com"]
+
+class TestAuthorization(unittest.IsolatedAsyncioTestCase):
+    async def test_authorization_sign(self):
+        req = http.AsyncHttpRequest(
+            url='http://127.0.0.1:8080/robots.txt',
+            method='POST',
+            body=b'hello world')
+        cred = credential.Credential('ak', 'sk')
+        auth = http_client.Authorization.v1(cred)
+        await auth.async_sign(req)
+        self.assertEqual(req.headers['authorization'], 'ak:OM5YrCaVA6t1nWsDpqPOdIZ2ufA=')
+        auth = http_client.Authorization.v2(cred)
+        await auth.async_sign(req)
+        self.assertEqual(req.headers['authorization'], 'Qiniu ak:_QfaED-dau-Eh86sxUV_SvlE6ws=')
+        auth = http_client.Authorization.download(cred)
+        await auth.async_sign(req)
+        self.assertTrue(req.url.startswith('http://127.0.0.1:8080/robots.txt?e='))

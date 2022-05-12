@@ -11,6 +11,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     )?;
     m.add("QiniuCallbackError", py.get_type::<QiniuCallbackError>())?;
     m.add(
+        "QiniuAuthorizationError",
+        py.get_type::<QiniuAuthorizationError>(),
+    )?;
+    m.add(
         "QiniuDataLockedError",
         py.get_type::<QiniuDataLockedError>(),
     )?;
@@ -261,4 +265,10 @@ create_exception!(
     QiniuApiCallError,
     PyIOError,
     "七牛 API 调用错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuAuthorizationError,
+    PyIOError,
+    "七牛签名异常"
 );
