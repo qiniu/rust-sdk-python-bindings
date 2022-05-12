@@ -27,5 +27,6 @@ clippy:
 docs: build
 	$(MAKE) -C docs html
 clean:
+	make -C rust-sdk clean
 	cargo clean
-	rm -rf .env
+	rm -rf .env docs/_build

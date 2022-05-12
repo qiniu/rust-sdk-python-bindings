@@ -1,8 +1,8 @@
 use super::{
     exceptions::{
         QiniuBodySizeMissingError, QiniuDataLockedError, QiniuHttpCallError,
-        QiniuInvalidHttpVersionError, QiniuInvalidIpAddrError, QiniuInvalidMethodError,
-        QiniuInvalidURLError, QiniuIsahcError,
+        QiniuInvalidHeaderValueError, QiniuInvalidHttpVersionError, QiniuInvalidIpAddrError,
+        QiniuInvalidMethodError, QiniuInvalidURLError, QiniuIsahcError,
     },
     utils::{
         convert_headers_to_hashmap, extract_async_request_body, extract_async_response_body,
@@ -15,7 +15,7 @@ use futures::AsyncReadExt;
 use pyo3::{
     exceptions::{PyIOError, PyNotImplementedError},
     prelude::*,
-    types::PyBytes,
+    types::{PyBytes, PyTuple},
 };
 use qiniu_sdk::http::{Method, Uri};
 use std::{
@@ -156,6 +156,30 @@ macro_rules! impl_http_request_builder {
                 Ok(())
             }
 
+            /// 获取上传进度回调
+            #[pyo3(text_signature = "($self, callback)")]
+            fn on_uploading_progress(&mut self, callback: PyObject) -> PyResult<()> {
+                self.0
+                    .on_uploading_progress(on_uploading_progress(callback));
+                Ok(())
+            }
+
+            /// 设置接受到响应状态回调
+            #[pyo3(text_signature = "($self, callback)")]
+            fn on_receive_response_status(&mut self, callback: PyObject) -> PyResult<()> {
+                self.0
+                    .on_receive_response_status(on_receive_response_status(callback));
+                Ok(())
+            }
+
+            /// 设置接受到响应 Header 回调
+            #[pyo3(text_signature = "($self, callback)")]
+            fn on_receive_response_header(&mut self, callback: PyObject) -> PyResult<()> {
+                self.0
+                    .on_receive_response_header(on_receive_response_header(callback));
+                Ok(())
+            }
+
             /// 重置 HTTP 请求构建器
             #[pyo3(text_signature = "($self)")]
             fn reset(&mut self) {
@@ -169,10 +193,50 @@ macro_rules! impl_http_request_builder {
             fn __str__(&self) -> String {
                 self.__repr__()
             }
-
-            // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
         }
     };
+}
+
+/// 数据传输进度信息
+#[pyclass]
+#[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
+#[derive(Clone, Copy)]
+struct TransferProgressInfo {
+    transferred_bytes: u64,
+    total_bytes: u64,
+}
+
+#[pymethods]
+impl TransferProgressInfo {
+    #[new]
+    fn new(transferred_bytes: u64, total_bytes: u64) -> Self {
+        Self {
+            transferred_bytes,
+            total_bytes,
+        }
+    }
+
+    /// 获取已经传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_transferred_bytes(&self) -> u64 {
+        self.transferred_bytes
+    }
+
+    /// 获取总共需要传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+}
+
+impl ToPyObject for TransferProgressInfo {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        self.to_owned().into_py(py)
+    }
 }
 
 /// 阻塞 HTTP 请求构建器
@@ -258,7 +322,7 @@ impl AsyncHttpRequestBuilder {
 /// 封装 HTTP 请求相关字段
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None)"
+    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
 )]
 struct SyncHttpRequest(qiniu_sdk::http::SyncRequest<'static>);
 
@@ -273,7 +337,10 @@ impl SyncHttpRequest {
         appended_user_agent = "None",
         resolved_ip_addrs = "None",
         body = "None",
-        body_len = "None"
+        body_len = "None",
+        uploading_progress = "None",
+        receive_response_status = "None",
+        receive_response_header = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -285,6 +352,9 @@ impl SyncHttpRequest {
         resolved_ip_addrs: Option<Vec<String>>,
         body: Option<PyObject>,
         body_len: Option<u64>,
+        uploading_progress: Option<PyObject>,
+        receive_response_status: Option<PyObject>,
+        receive_response_header: Option<PyObject>,
         py: Python<'_>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::SyncRequest::builder();
@@ -308,6 +378,15 @@ impl SyncHttpRequest {
         }
         if let Some(body) = body {
             builder.body(extract_sync_request_body(body, body_len, py)?);
+        }
+        if let Some(callback) = uploading_progress {
+            builder.on_uploading_progress(on_uploading_progress(callback));
+        }
+        if let Some(callback) = receive_response_status {
+            builder.on_receive_response_status(on_receive_response_status(callback));
+        }
+        if let Some(callback) = receive_response_header {
+            builder.on_receive_response_header(on_receive_response_header(callback));
         }
         Ok(Self(builder.build()))
     }
@@ -414,7 +493,26 @@ impl SyncHttpRequest {
         *self.0.body_mut() = qiniu_sdk::http::SyncRequestBody::from(body);
     }
 
-    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
+    /// 设置上传进度回调
+    #[setter]
+    fn set_uploading_progress(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.0.on_uploading_progress_mut() = Some(on_uploading_progress(callback));
+        Ok(())
+    }
+
+    /// 设置接受到响应状态回调
+    #[setter]
+    fn set_receive_response_status(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.0.on_receive_response_status_mut() = Some(on_receive_response_status(callback));
+        Ok(())
+    }
+
+    /// 设置接受到响应 Header 回调
+    #[setter]
+    fn set_receive_response_header(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.0.on_receive_response_header_mut() = Some(on_receive_response_header(callback));
+        Ok(())
+    }
 }
 
 /// 异步 HTTP 请求
@@ -583,7 +681,26 @@ impl AsyncHttpRequest {
         Ok(())
     }
 
-    // TODO: ADD `on_uploading_progress`, `on_receive_response_status`, `on_receive_response_header`
+    /// 设置上传进度回调
+    #[setter]
+    fn set_uploading_progress(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.lock()?.on_uploading_progress_mut() = Some(on_uploading_progress(callback));
+        Ok(())
+    }
+
+    /// 设置接受到响应状态回调
+    #[setter]
+    fn set_receive_response_status(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.lock()?.on_receive_response_status_mut() = Some(on_receive_response_status(callback));
+        Ok(())
+    }
+
+    /// 设置接受到响应 Header 回调
+    #[setter]
+    fn set_receive_response_header(&mut self, callback: PyObject) -> PyResult<()> {
+        *self.lock()?.on_receive_response_header_mut() = Some(on_receive_response_header(callback));
+        Ok(())
+    }
 }
 
 impl AsyncHttpRequest {
@@ -1132,3 +1249,49 @@ impl AsyncHttpResponse {
 }
 
 impl_response_body!(AsyncHttpResponse);
+
+fn on_uploading_progress(callback: PyObject) -> qiniu_sdk::http::OnProgressCallback<'static> {
+    qiniu_sdk::http::OnProgressCallback::new(move |progress| {
+        Python::with_gil(|py| {
+            let args = PyTuple::new(
+                py,
+                [TransferProgressInfo {
+                    transferred_bytes: progress.transferred_bytes(),
+                    total_bytes: progress.total_bytes(),
+                }],
+            );
+            callback.call1(py, args)
+        })?;
+        Ok(())
+    })
+}
+
+fn on_receive_response_status(
+    callback: PyObject,
+) -> qiniu_sdk::http::OnStatusCodeCallback<'static> {
+    qiniu_sdk::http::OnStatusCodeCallback::new(move |status_code| {
+        Python::with_gil(|py| {
+            let args = PyTuple::new(py, [status_code.as_u16()]);
+            callback.call1(py, args)
+        })?;
+        Ok(())
+    })
+}
+
+fn on_receive_response_header(callback: PyObject) -> qiniu_sdk::http::OnHeaderCallback<'static> {
+    qiniu_sdk::http::OnHeaderCallback::new(move |header_name, header_value| {
+        Python::with_gil(|py| {
+            let args = PyTuple::new(
+                py,
+                [
+                    header_name.as_str(),
+                    header_value
+                        .to_str()
+                        .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?,
+                ],
+            );
+            callback.call1(py, args)
+        })?;
+        Ok(())
+    })
+}
