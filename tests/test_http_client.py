@@ -270,12 +270,12 @@ class TestEndpointsProvider(unittest.TestCase):
                                rsf_alternative_endpoints=[
                                    ('192.168.8.1', 8080), ('192.168.8.2', 8080)])
         e = http_client.EndpointsProvider(r)
-        self.assertEqual(e.get_endpoints(
+        self.assertEqual(e.get(
             service_names=[http_client.ServiceName.Up]),
             http_client.Endpoints(
                 ['192.168.1.1:8080', '192.168.1.2:8080'],
                 ['192.168.2.1:8080', '192.168.2.2:8080']))
-        self.assertEqual(e.get_endpoints(
+        self.assertEqual(e.get(
             service_names=[http_client.ServiceName.Rs, http_client.ServiceName.Rsf]),
             http_client.Endpoints(
                 ['192.168.5.1:8080', '192.168.5.2:8080',
@@ -331,6 +331,26 @@ class TestBucketRegionsQueryer(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(regions[1].region_id, 'z1')
             region = await query.async_get()
             self.assertEqual(region.region_id, 'z0')
+        finally:
+            await runner.cleanup()
+
+class TestBucketDomainsQueryer(unittest.IsolatedAsyncioTestCase):
+    async def test_bucket_domains_queryer(self):
+        async def handler(request):
+            return web.json_response(domains_response_body(), headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/v2/domains', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            provider = http_client.BucketDomainsQueryer.in_memory(use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            query = provider.query(credential.Credential('ak', 'sk'), 'bucket')
+            endpoints = await query.async_get()
+            self.assertEqual(endpoints.preferred, [http_client.Endpoint('fakedomain.1.com'), http_client.Endpoint('fakedomain.2.com')])
         finally:
             await runner.cleanup()
 
@@ -666,3 +686,6 @@ def query_response_body():
             }
           ]
         }
+
+def domains_response_body():
+    return ["fakedomain.1.com", "fakedomain.2.com"]
