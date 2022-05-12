@@ -19,6 +19,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuDataLockedError>(),
     )?;
     m.add("QiniuIsahcError", py.get_type::<QiniuIsahcError>())?;
+    m.add("QiniuTrustDNSError", py.get_type::<QiniuTrustDNSError>())?;
     m.add("QiniuUnknownError", py.get_type::<QiniuUnknownError>())?;
     m.add(
         "QiniuInvalidURLError",
@@ -73,6 +74,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuEmptyRegionsProvider>(),
     )?;
     m.add(
+        "QiniuEmptyChainedResolver",
+        py.get_type::<QiniuEmptyChainedResolver>(),
+    )?;
+    m.add(
         "QiniuInvalidServiceNameError",
         py.get_type::<QiniuInvalidServiceNameError>(),
     )?;
@@ -118,6 +123,12 @@ create_exception!(
 create_exception!(
     qiniu_sdk_bindings,
     QiniuIsahcError,
+    PyRuntimeError,
+    "七牛 Isahc 异常"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuTrustDNSError,
     PyRuntimeError,
     "七牛 Isahc 异常"
 );
@@ -210,6 +221,12 @@ create_exception!(
     QiniuEmptyRegionsProvider,
     PyValueError,
     "七牛空 StaticRegionsProvider 错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuEmptyChainedResolver,
+    PyValueError,
+    "七牛空 ChainedResolver 错误"
 );
 create_exception!(
     qiniu_sdk_bindings,

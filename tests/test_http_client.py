@@ -310,6 +310,7 @@ class TestAllRegionsProvider(unittest.IsolatedAsyncioTestCase):
         finally:
             await runner.cleanup()
 
+
 class TestBucketRegionsQueryer(unittest.IsolatedAsyncioTestCase):
     async def test_bucket_regions_queryer(self):
         async def handler(request):
@@ -323,7 +324,8 @@ class TestBucketRegionsQueryer(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
-            provider = http_client.BucketRegionsQueryer.in_memory(use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            provider = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             query = provider.query('ak', 'bucket')
             regions = await query.async_get_all()
             self.assertEqual(len(regions), 2)
@@ -333,6 +335,7 @@ class TestBucketRegionsQueryer(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(region.region_id, 'z0')
         finally:
             await runner.cleanup()
+
 
 class TestBucketDomainsQueryer(unittest.IsolatedAsyncioTestCase):
     async def test_bucket_domains_queryer(self):
@@ -347,10 +350,12 @@ class TestBucketDomainsQueryer(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
-            provider = http_client.BucketDomainsQueryer.in_memory(use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            provider = http_client.BucketDomainsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             query = provider.query(credential.Credential('ak', 'sk'), 'bucket')
             endpoints = await query.async_get()
-            self.assertEqual(endpoints.preferred, [http_client.Endpoint('fakedomain.1.com'), http_client.Endpoint('fakedomain.2.com')])
+            self.assertEqual(endpoints.preferred, [http_client.Endpoint(
+                'fakedomain.1.com'), http_client.Endpoint('fakedomain.2.com')])
         finally:
             await runner.cleanup()
 
@@ -591,104 +596,107 @@ def regions_response_body():
         ]
     }
 
+
 def query_response_body():
     return {
-          "hosts": [
+        "hosts": [
             {
-              "region": "z0",
-              "ttl": 5,
-              "io": {
-                "domains": [
-                  "iovip.qbox.me"
-                ]
-              },
-              "up": {
-                "domains": [
-                  "upload.qiniup.com",
-                  "up.qiniup.com"
-                ],
-                "old": [
-                  "upload.qbox.me",
-                  "up.qbox.me"
-                ]
-              },
-              "uc": {
-                "domains": [
-                  "uc.qbox.me"
-                ]
-              },
-              "rs": {
-                "domains": [
-                  "rs-z0.qbox.me"
-                ]
-              },
-              "rsf": {
-                "domains": [
-                  "rsf-z0.qbox.me"
-                ]
-              },
-              "api": {
-                "domains": [
-                  "api.qiniu.com"
-                ]
-              },
-              "s3": {
-                "domains": [
-                  "s3-cn-east-1.qiniucs.com"
-                ],
-                "region_alias": "cn-east-1"
-              }
+                "region": "z0",
+                "ttl": 5,
+                "io": {
+                    "domains": [
+                          "iovip.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload.qiniup.com",
+                        "up.qiniup.com"
+                    ],
+                    "old": [
+                        "upload.qbox.me",
+                        "up.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-z0.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-z0.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-cn-east-1.qiniucs.com"
+                    ],
+                    "region_alias": "cn-east-1"
+                }
             },
             {
-              "region": "z1",
-              "ttl": 5,
-              "io": {
-                "domains": [
-                  "iovip-z1.qbox.me"
-                ]
-              },
-              "up": {
-                "domains": [
-                  "upload-z1.qiniup.com",
-                  "up-z1.qiniup.com"
-                ],
-                "old": [
-                  "upload-z1.qbox.me",
-                  "up-z1.qbox.me"
-                ]
-              },
-              "uc": {
-                "domains": [
-                  "uc.qbox.me"
-                ]
-              },
-              "rs": {
-                "domains": [
-                  "rs-z1.qbox.me"
-                ]
-              },
-              "rsf": {
-                "domains": [
-                  "rsf-z1.qbox.me"
-                ]
-              },
-              "api": {
-                "domains": [
-                  "api.qiniu.com"
-                ]
-              },
-              "s3": {
-                "domains": [
-                  "s3-cn-north-1.qiniucs.com"
-                ],
-                "region_alias": "cn-north-1"
-              }
+                "region": "z1",
+                "ttl": 5,
+                "io": {
+                    "domains": [
+                          "iovip-z1.qbox.me"
+                    ]
+                },
+                "up": {
+                    "domains": [
+                        "upload-z1.qiniup.com",
+                        "up-z1.qiniup.com"
+                    ],
+                    "old": [
+                        "upload-z1.qbox.me",
+                        "up-z1.qbox.me"
+                    ]
+                },
+                "uc": {
+                    "domains": [
+                        "uc.qbox.me"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "rs-z1.qbox.me"
+                    ]
+                },
+                "rsf": {
+                    "domains": [
+                        "rsf-z1.qbox.me"
+                    ]
+                },
+                "api": {
+                    "domains": [
+                        "api.qiniu.com"
+                    ]
+                },
+                "s3": {
+                    "domains": [
+                        "s3-cn-north-1.qiniucs.com"
+                    ],
+                    "region_alias": "cn-north-1"
+                }
             }
-          ]
-        }
+        ]
+    }
+
 
 def domains_response_body():
     return ["fakedomain.1.com", "fakedomain.2.com"]
+
 
 class TestAuthorization(unittest.IsolatedAsyncioTestCase):
     async def test_authorization_sign(self):
@@ -699,10 +707,25 @@ class TestAuthorization(unittest.IsolatedAsyncioTestCase):
         cred = credential.Credential('ak', 'sk')
         auth = http_client.Authorization.v1(cred)
         await auth.async_sign(req)
-        self.assertEqual(req.headers['authorization'], 'ak:OM5YrCaVA6t1nWsDpqPOdIZ2ufA=')
+        self.assertEqual(req.headers['authorization'],
+                         'QBox ak:OM5YrCaVA6t1nWsDpqPOdIZ2ufA=')
         auth = http_client.Authorization.v2(cred)
         await auth.async_sign(req)
-        self.assertEqual(req.headers['authorization'], 'Qiniu ak:_QfaED-dau-Eh86sxUV_SvlE6ws=')
+        self.assertEqual(req.headers['authorization'],
+                         'Qiniu ak:_QfaED-dau-Eh86sxUV_SvlE6ws=')
         auth = http_client.Authorization.download(cred)
         await auth.async_sign(req)
-        self.assertTrue(req.url.startswith('http://127.0.0.1:8080/robots.txt?e='))
+        self.assertTrue(req.url.startswith(
+            'http://127.0.0.1:8080/robots.txt?e='))
+
+
+class TestResolver(unittest.IsolatedAsyncioTestCase):
+    async def test_simple_resolver(self):
+        resolver = http_client.SimpleResolver()
+        domains = await resolver.async_resolve('upload.qiniup.com')
+        self.assertTrue(len(domains) > 0)
+
+    async def test_trust_dns_resolver(self):
+        resolver = http_client.TrustDnsResolver()
+        domains = await resolver.async_resolve('upload.qiniup.com')
+        self.assertTrue(len(domains) > 0)
