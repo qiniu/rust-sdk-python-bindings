@@ -22,6 +22,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Region>()?;
     m.add_class::<RegionsProvider>()?;
     m.add_class::<AllRegionsProvider>()?;
+    m.add_class::<BucketRegionsQueryer>()?;
 
     Ok(())
 }
@@ -863,6 +864,115 @@ impl AllRegionsProvider {
         }
         if let Some(shrink_interval) = shrink_interval {
             builder = builder.shrink_interval(Duration::from_secs(shrink_interval));
+        }
+        builder
+    }
+}
+
+/// 存储空间相关区域查询构建器
+#[pyclass]
+#[pyo3(
+    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+)]
+#[derive(Clone)]
+struct BucketRegionsQueryer(qiniu_sdk::http_client::BucketRegionsQueryer);
+
+#[pymethods]
+impl BucketRegionsQueryer {
+    #[new]
+    #[args(
+        auto_persistent = "true",
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        auto_persistent: bool,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> Self {
+        Self(
+            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
+                .default_load_or_create_from(auto_persistent),
+        )
+    }
+
+    #[staticmethod]
+    #[args(
+        auto_persistent = "true",
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[pyo3(
+        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn load_or_create_from(
+        path: PathBuf,
+        auto_persistent: bool,
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> Self {
+        Self(
+            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
+                .load_or_create_from(path, auto_persistent),
+        )
+    }
+
+    #[staticmethod]
+    #[args(
+        use_https = "false",
+        uc_endpoints = "None",
+        cache_lifetime = "None",
+        shrink_interval = "None"
+    )]
+    #[pyo3(
+        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn in_memory(
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> Self {
+        Self(
+            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
+                .in_memory(),
+        )
+    }
+
+    #[pyo3(text_signature = "($self, access_key, bucket_name)")]
+    fn query(&self, access_key: &str, bucket_name: &str) -> RegionsProvider {
+        RegionsProvider(Box::new(self.0.query(access_key, bucket_name)))
+    }
+}
+
+impl BucketRegionsQueryer {
+    fn make_queryer_builder(
+        use_https: bool,
+        uc_endpoints: Option<Endpoints>,
+        cache_lifetime: Option<u64>,
+        shrink_interval: Option<u64>,
+    ) -> qiniu_sdk::http_client::BucketRegionsQueryerBuilder {
+        let mut builder = qiniu_sdk::http_client::BucketRegionsQueryer::builder();
+        builder.use_https(use_https);
+        if let Some(uc_endpoints) = uc_endpoints {
+            builder.uc_endpoints(uc_endpoints.0);
+        }
+        if let Some(cache_lifetime) = cache_lifetime {
+            builder.cache_lifetime(Duration::from_secs(cache_lifetime));
+        }
+        if let Some(shrink_interval) = shrink_interval {
+            builder.shrink_interval(Duration::from_secs(shrink_interval));
         }
         builder
     }
