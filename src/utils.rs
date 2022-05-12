@@ -419,7 +419,7 @@ pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_cli
             .parse()
             .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))
     } else {
-        Ok(endpoint.extract::<Endpoint>()?.into_inner())
+        Ok(endpoint.extract::<Endpoint>()?.into())
     }
 }
 

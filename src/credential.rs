@@ -4,7 +4,7 @@ use super::{
 };
 use pyo3::prelude::*;
 use qiniu_sdk::credential::{QINIU_ACCESS_KEY_ENV_KEY, QINIU_SECRET_KEY_ENV_KEY};
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, future::Future, io::Result as IoResult, pin::Pin, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "credential")?;
@@ -309,9 +309,20 @@ impl CredentialProvider {
     }
 }
 
-impl CredentialProvider {
-    pub(super) fn into_inner(self) -> Box<dyn qiniu_sdk::credential::CredentialProvider> {
-        self.0
+impl qiniu_sdk::credential::CredentialProvider for CredentialProvider {
+    fn get(
+        &self,
+        opts: qiniu_sdk::credential::GetOptions,
+    ) -> IoResult<qiniu_sdk::credential::GotCredential> {
+        self.0.get(opts)
+    }
+
+    fn async_get<'a>(
+        &'a self,
+        opts: qiniu_sdk::credential::GetOptions,
+    ) -> Pin<Box<dyn Future<Output = IoResult<qiniu_sdk::credential::GotCredential>> + 'a + Send>>
+    {
+        self.0.async_get(opts)
     }
 }
 

@@ -11,10 +11,16 @@ use pyo3::{
 };
 use qiniu_sdk::{
     prelude::UploadTokenProviderExt,
-    upload_token::{FileType, ParseError, ToStringError},
+    upload_token::{
+        FileType, GotAccessKey, GotUploadPolicy, ParseError, ParseResult, ToStringError,
+        ToStringResult,
+    },
 };
 use std::{
+    borrow::Cow,
+    future::Future,
     mem::take,
+    pin::Pin,
     time::{Duration, SystemTime},
 };
 
@@ -281,7 +287,7 @@ impl UploadPolicy {
         UploadTokenProvider(Box::new(
             self.to_owned()
                 .0
-                .into_dynamic_upload_token_provider(credential.into_inner()),
+                .into_dynamic_upload_token_provider(credential),
         ))
     }
 
@@ -582,8 +588,8 @@ impl UploadPolicyBuilder {
 ///
 /// 可以阅读 <https://developer.qiniu.com/kodo/manual/1208/upload-token> 了解七牛安全机制。
 #[pyclass(subclass)]
-#[derive(Clone)]
-struct UploadTokenProvider(Box<dyn qiniu_sdk::upload_token::UploadTokenProvider>);
+#[derive(Clone, Debug)]
+pub(super) struct UploadTokenProvider(Box<dyn qiniu_sdk::upload_token::UploadTokenProvider>);
 
 #[pymethods]
 impl UploadTokenProvider {
@@ -713,6 +719,50 @@ impl UploadTokenProvider {
     }
 }
 
+impl qiniu_sdk::upload_token::UploadTokenProvider for UploadTokenProvider {
+    fn access_key(
+        &self,
+        opts: qiniu_sdk::upload_token::GetAccessKeyOptions,
+    ) -> ParseResult<GotAccessKey> {
+        self.0.access_key(opts)
+    }
+
+    fn policy(
+        &self,
+        opts: qiniu_sdk::upload_token::GetPolicyOptions,
+    ) -> ParseResult<GotUploadPolicy> {
+        self.0.policy(opts)
+    }
+
+    fn to_token_string(
+        &self,
+        opts: qiniu_sdk::upload_token::ToStringOptions,
+    ) -> ToStringResult<Cow<'_, str>> {
+        self.0.to_token_string(opts)
+    }
+
+    fn async_access_key<'a>(
+        &'a self,
+        opts: qiniu_sdk::upload_token::GetAccessKeyOptions,
+    ) -> Pin<Box<dyn Future<Output = ParseResult<GotAccessKey>> + 'a + Send>> {
+        self.0.async_access_key(opts)
+    }
+
+    fn async_policy<'a>(
+        &'a self,
+        opts: qiniu_sdk::upload_token::GetPolicyOptions,
+    ) -> Pin<Box<dyn Future<Output = ParseResult<GotUploadPolicy>> + 'a + Send>> {
+        self.0.async_policy(opts)
+    }
+
+    fn async_to_token_string<'a>(
+        &'a self,
+        opts: qiniu_sdk::upload_token::ToStringOptions,
+    ) -> Pin<Box<dyn Future<Output = ToStringResult<Cow<'a, str>>> + 'a + Send>> {
+        self.0.async_to_token_string(opts)
+    }
+}
+
 fn convert_parse_error_to_py_err(err: ParseError) -> PyErr {
     match err {
         ParseError::CredentialGetError(err) => QiniuIoError::new_err(err),
@@ -770,7 +820,7 @@ impl FromUploadPolicy {
             Self,
             UploadTokenProvider(Box::new(qiniu_sdk::upload_token::FromUploadPolicy::new(
                 upload_policy.0,
-                credential.into_inner(),
+                credential,
             ))),
         )
     }
@@ -798,7 +848,7 @@ impl BucketUploadTokenProvider {
         let mut builder = qiniu_sdk::upload_token::BucketUploadTokenProvider::builder(
             bucket,
             Duration::from_secs(upload_token_lifetime),
-            credential.into_inner(),
+            credential,
         );
         if let Some(on_policy_generated) = on_policy_generated {
             builder = set_on_policy_generated_to_builder(builder, on_policy_generated);
@@ -853,7 +903,7 @@ impl ObjectUploadTokenProvider {
             bucket,
             object,
             Duration::from_secs(upload_token_lifetime),
-            credential.into_inner(),
+            credential,
         );
         if let Some(on_policy_generated) = on_policy_generated {
             builder = set_on_policy_generated_to_builder(builder, on_policy_generated);

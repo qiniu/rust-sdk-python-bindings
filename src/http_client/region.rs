@@ -188,9 +188,9 @@ impl Endpoint {
     }
 }
 
-impl Endpoint {
-    pub(crate) fn into_inner(self) -> qiniu_sdk::http_client::Endpoint {
-        self.0
+impl From<Endpoint> for qiniu_sdk::http_client::Endpoint {
+    fn from(e: Endpoint) -> Self {
+        e.0
     }
 }
 
@@ -854,8 +854,7 @@ impl AllRegionsProvider {
         cache_lifetime: Option<u64>,
         shrink_interval: Option<u64>,
     ) -> qiniu_sdk::http_client::AllRegionsProviderBuilder {
-        let mut builder =
-            qiniu_sdk::http_client::AllRegionsProvider::builder(credential_provider.into_inner());
+        let mut builder = qiniu_sdk::http_client::AllRegionsProvider::builder(credential_provider);
         builder = builder.use_https(use_https);
         if let Some(uc_endpoints) = uc_endpoints {
             builder = builder.uc_endpoints(uc_endpoints.0);
@@ -1064,7 +1063,7 @@ impl BucketDomainsQueryer {
 
     #[pyo3(text_signature = "($self, access_key, bucket_name)")]
     fn query(&self, credential: CredentialProvider, bucket_name: &str) -> EndpointsProvider {
-        EndpointsProvider(Box::new(self.0.query(credential.into_inner(), bucket_name)))
+        EndpointsProvider(Box::new(self.0.query(credential, bucket_name)))
     }
 }
 
