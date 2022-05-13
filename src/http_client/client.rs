@@ -3,7 +3,7 @@ use crate::{
     exceptions::{
         QiniuApiCallError, QiniuAuthorizationError, QiniuEmptyChainedResolver, QiniuTrustDNSError,
     },
-    http::{AsyncHttpRequest, SyncHttpRequest},
+    http::{AsyncHttpRequest, Metrics, SyncHttpRequest},
     upload_token::UploadTokenProvider,
 };
 use pyo3::prelude::*;
@@ -280,7 +280,7 @@ impl ShuffledResolver {
 /// 默认缓存 120 秒，清理间隔为 120 秒
 #[pyclass(extends = Resolver)]
 #[pyo3(
-    text_signature = "(resolver, /, auto_persistent = None, cache_lifetime = None, shrink_interval = None)"
+    text_signature = "(resolver, /, auto_persistent = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone, Copy)]
 struct CachedResolver;
@@ -290,20 +290,20 @@ impl CachedResolver {
     #[new]
     #[args(
         auto_persistent = "true",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
         resolver: Resolver,
         auto_persistent: bool,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> (Self, Resolver) {
         (
             Self,
             Resolver(Box::new(
-                Self::new_builder(resolver, cache_lifetime, shrink_interval)
+                Self::new_builder(resolver, cache_lifetime_secs, shrink_interval_secs)
                     .default_load_or_create_from(auto_persistent),
             )),
         )
@@ -312,19 +312,19 @@ impl CachedResolver {
     #[staticmethod]
     #[args(
         auto_persistent = "true",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(resolver, path, /, auto_persistent = True, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(resolver, path, /, auto_persistent = True, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
         resolver: Resolver,
         path: PathBuf,
         auto_persistent: bool,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<Py<Self>> {
         Py::new(
@@ -332,7 +332,7 @@ impl CachedResolver {
             (
                 Self,
                 Resolver(Box::new(
-                    Self::new_builder(resolver, cache_lifetime, shrink_interval)
+                    Self::new_builder(resolver, cache_lifetime_secs, shrink_interval_secs)
                         .load_or_create_from(path, auto_persistent),
                 )),
             ),
@@ -340,13 +340,15 @@ impl CachedResolver {
     }
 
     #[staticmethod]
-    #[args(cache_lifetime = "None", shrink_interval = "None")]
-    #[pyo3(text_signature = "(resolver, /, cache_lifetime = None, shrink_interval = None)")]
+    #[args(cache_lifetime_secs = "None", shrink_interval_secs = "None")]
+    #[pyo3(
+        text_signature = "(resolver, /, cache_lifetime_secs = None, shrink_interval_secs = None)"
+    )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(
         resolver: Resolver,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<Py<Self>> {
         Py::new(
@@ -354,7 +356,8 @@ impl CachedResolver {
             (
                 Self,
                 Resolver(Box::new(
-                    Self::new_builder(resolver, cache_lifetime, shrink_interval).in_memory(),
+                    Self::new_builder(resolver, cache_lifetime_secs, shrink_interval_secs)
+                        .in_memory(),
                 )),
             ),
         )
@@ -364,15 +367,15 @@ impl CachedResolver {
 impl CachedResolver {
     fn new_builder(
         resolver: Resolver,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> qiniu_sdk::http_client::CachedResolverBuilder<Box<dyn qiniu_sdk::http_client::Resolver>>
     {
         let mut builder = qiniu_sdk::http_client::CachedResolverBuilder::new(resolver.0);
-        if let Some(cache_lifetime) = cache_lifetime {
+        if let Some(cache_lifetime) = cache_lifetime_secs {
             builder = builder.cache_lifetime(Duration::from_secs(cache_lifetime));
         }
-        if let Some(shrink_interval) = shrink_interval {
+        if let Some(shrink_interval) = shrink_interval_secs {
             builder = builder.shrink_interval(Duration::from_secs(shrink_interval));
         }
         builder

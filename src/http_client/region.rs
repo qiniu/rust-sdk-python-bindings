@@ -739,7 +739,7 @@ impl Region {
 /// 七牛所有区域信息查询器
 #[pyclass(extends = RegionsProvider)]
 #[pyo3(
-    text_signature = "(credential_provider, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    text_signature = "(credential_provider, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct AllRegionsProvider;
@@ -751,8 +751,8 @@ impl AllRegionsProvider {
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -760,15 +760,15 @@ impl AllRegionsProvider {
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> (Self, RegionsProvider) {
         let builder = Self::new_builder(
             credential_provider,
             use_https,
             uc_endpoints,
-            cache_lifetime,
-            shrink_interval,
+            cache_lifetime_secs,
+            shrink_interval_secs,
         );
         (
             Self,
@@ -780,14 +780,14 @@ impl AllRegionsProvider {
 
     #[staticmethod]
     #[pyo3(
-        text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[args(
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
@@ -796,16 +796,16 @@ impl AllRegionsProvider {
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<Py<Self>> {
         let builder = Self::new_builder(
             credential_provider,
             use_https,
             uc_endpoints,
-            cache_lifetime,
-            shrink_interval,
+            cache_lifetime_secs,
+            shrink_interval_secs,
         );
         Py::new(
             py,
@@ -818,29 +818,29 @@ impl AllRegionsProvider {
 
     #[staticmethod]
     #[pyo3(
-        text_signature = "(credential_provider, /, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(credential_provider, /, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[args(
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(
         credential_provider: CredentialProvider,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<Py<Self>> {
         let builder = Self::new_builder(
             credential_provider,
             use_https,
             uc_endpoints,
-            cache_lifetime,
-            shrink_interval,
+            cache_lifetime_secs,
+            shrink_interval_secs,
         );
         Py::new(py, (Self, RegionsProvider(Box::new(builder.in_memory()))))
     }
@@ -851,19 +851,19 @@ impl AllRegionsProvider {
         credential_provider: CredentialProvider,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> qiniu_sdk::http_client::AllRegionsProviderBuilder {
         let mut builder = qiniu_sdk::http_client::AllRegionsProvider::builder(credential_provider);
         builder = builder.use_https(use_https);
         if let Some(uc_endpoints) = uc_endpoints {
             builder = builder.uc_endpoints(uc_endpoints.0);
         }
-        if let Some(cache_lifetime) = cache_lifetime {
-            builder = builder.cache_lifetime(Duration::from_secs(cache_lifetime));
+        if let Some(cache_lifetime_secs) = cache_lifetime_secs {
+            builder = builder.cache_lifetime(Duration::from_secs(cache_lifetime_secs));
         }
-        if let Some(shrink_interval) = shrink_interval {
-            builder = builder.shrink_interval(Duration::from_secs(shrink_interval));
+        if let Some(shrink_interval_secs) = shrink_interval_secs {
+            builder = builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
         }
         builder
     }
@@ -872,7 +872,7 @@ impl AllRegionsProvider {
 /// 存储空间相关区域查询构建器
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct BucketRegionsQueryer(qiniu_sdk::http_client::BucketRegionsQueryer);
@@ -884,20 +884,25 @@ impl BucketRegionsQueryer {
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .default_load_or_create_from(auto_persistent),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .default_load_or_create_from(auto_persistent),
         )
     }
 
@@ -906,11 +911,11 @@ impl BucketRegionsQueryer {
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
@@ -918,12 +923,17 @@ impl BucketRegionsQueryer {
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .load_or_create_from(path, auto_persistent),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .load_or_create_from(path, auto_persistent),
         )
     }
 
@@ -931,22 +941,27 @@ impl BucketRegionsQueryer {
     #[args(
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .in_memory(),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .in_memory(),
         )
     }
 
@@ -960,19 +975,19 @@ impl BucketRegionsQueryer {
     fn make_queryer_builder(
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> qiniu_sdk::http_client::BucketRegionsQueryerBuilder {
         let mut builder = qiniu_sdk::http_client::BucketRegionsQueryer::builder();
         builder.use_https(use_https);
         if let Some(uc_endpoints) = uc_endpoints {
             builder.uc_endpoints(uc_endpoints.0);
         }
-        if let Some(cache_lifetime) = cache_lifetime {
-            builder.cache_lifetime(Duration::from_secs(cache_lifetime));
+        if let Some(cache_lifetime_secs) = cache_lifetime_secs {
+            builder.cache_lifetime(Duration::from_secs(cache_lifetime_secs));
         }
-        if let Some(shrink_interval) = shrink_interval {
-            builder.shrink_interval(Duration::from_secs(shrink_interval));
+        if let Some(shrink_interval_secs) = shrink_interval_secs {
+            builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
         }
         builder
     }
@@ -983,7 +998,7 @@ impl BucketRegionsQueryer {
 /// 查询该存储空间绑定的域名。
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct BucketDomainsQueryer(qiniu_sdk::http_client::BucketDomainsQueryer);
@@ -995,20 +1010,25 @@ impl BucketDomainsQueryer {
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .default_load_or_create_from(auto_persistent),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .default_load_or_create_from(auto_persistent),
         )
     }
 
@@ -1017,11 +1037,11 @@ impl BucketDomainsQueryer {
         auto_persistent = "true",
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
@@ -1029,12 +1049,17 @@ impl BucketDomainsQueryer {
         auto_persistent: bool,
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .load_or_create_from(path, auto_persistent),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .load_or_create_from(path, auto_persistent),
         )
     }
 
@@ -1042,22 +1067,27 @@ impl BucketDomainsQueryer {
     #[args(
         use_https = "false",
         uc_endpoints = "None",
-        cache_lifetime = "None",
-        shrink_interval = "None"
+        cache_lifetime_secs = "None",
+        shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime = None, shrink_interval = None)"
+        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> Self {
         Self(
-            Self::make_queryer_builder(use_https, uc_endpoints, cache_lifetime, shrink_interval)
-                .in_memory(),
+            Self::make_queryer_builder(
+                use_https,
+                uc_endpoints,
+                cache_lifetime_secs,
+                shrink_interval_secs,
+            )
+            .in_memory(),
         )
     }
 
@@ -1071,19 +1101,19 @@ impl BucketDomainsQueryer {
     fn make_queryer_builder(
         use_https: bool,
         uc_endpoints: Option<Endpoints>,
-        cache_lifetime: Option<u64>,
-        shrink_interval: Option<u64>,
+        cache_lifetime_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
     ) -> qiniu_sdk::http_client::BucketDomainsQueryerBuilder {
         let mut builder = qiniu_sdk::http_client::BucketDomainsQueryer::builder();
         builder.use_https(use_https);
         if let Some(uc_endpoints) = uc_endpoints {
             builder.uc_endpoints(uc_endpoints.0);
         }
-        if let Some(cache_lifetime) = cache_lifetime {
-            builder.cache_lifetime(Duration::from_secs(cache_lifetime));
+        if let Some(cache_lifetime_secs) = cache_lifetime_secs {
+            builder.cache_lifetime(Duration::from_secs(cache_lifetime_secs));
         }
-        if let Some(shrink_interval) = shrink_interval {
-            builder.shrink_interval(Duration::from_secs(shrink_interval));
+        if let Some(shrink_interval_secs) = shrink_interval_secs {
+            builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
         }
         builder
     }

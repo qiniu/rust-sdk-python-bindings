@@ -794,7 +794,7 @@ impl From<Version> for qiniu_sdk::http::Version {
 #[pyclass]
 #[derive(Clone)]
 #[pyo3(
-    text_signature = "(/, total_duration = None, name_lookup_duration = None, connect_duration = None, secure_connect_duration = None, redirect_duration = None, transfer_duration = None)"
+    text_signature = "(/, total_duration_ns = None, name_lookup_duration_ns = None, connect_duration_ns = None, secure_connect_duration_ns = None, redirect_duration_ns = None, transfer_duration_ns = None)"
 )]
 pub(super) struct Metrics(qiniu_sdk::http::Metrics);
 
@@ -802,39 +802,39 @@ pub(super) struct Metrics(qiniu_sdk::http::Metrics);
 impl Metrics {
     #[new]
     #[args(
-        total_duration = "None",
-        name_lookup_duration = "None",
-        connect_duration = "None",
-        secure_connect_duration = "None",
-        redirect_duration = "None",
-        transfer_duration = "None"
+        total_duration_ns = "None",
+        name_lookup_duration_ns = "None",
+        connect_duration_ns = "None",
+        secure_connect_duration_ns = "None",
+        redirect_duration_ns = "None",
+        transfer_duration_ns = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        total_duration: Option<u64>,
-        name_lookup_duration: Option<u64>,
-        connect_duration: Option<u64>,
-        secure_connect_duration: Option<u64>,
-        redirect_duration: Option<u64>,
-        transfer_duration: Option<u64>,
+        total_duration_ns: Option<u64>,
+        name_lookup_duration_ns: Option<u64>,
+        connect_duration_ns: Option<u64>,
+        secure_connect_duration_ns: Option<u64>,
+        redirect_duration_ns: Option<u64>,
+        transfer_duration_ns: Option<u64>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::MetricsBuilder::default();
-        if let Some(duration) = total_duration {
+        if let Some(duration) = total_duration_ns {
             builder.total_duration(Duration::from_nanos(duration));
         }
-        if let Some(duration) = name_lookup_duration {
+        if let Some(duration) = name_lookup_duration_ns {
             builder.name_lookup_duration(Duration::from_nanos(duration));
         }
-        if let Some(duration) = connect_duration {
+        if let Some(duration) = connect_duration_ns {
             builder.connect_duration(Duration::from_nanos(duration));
         }
-        if let Some(duration) = secure_connect_duration {
+        if let Some(duration) = secure_connect_duration_ns {
             builder.secure_connect_duration(Duration::from_nanos(duration));
         }
-        if let Some(duration) = redirect_duration {
+        if let Some(duration) = redirect_duration_ns {
             builder.redirect_duration(Duration::from_nanos(duration));
         }
-        if let Some(duration) = transfer_duration {
+        if let Some(duration) = transfer_duration_ns {
             builder.transfer_duration(Duration::from_nanos(duration));
         }
         Ok(Self(builder.build()))
@@ -848,8 +848,8 @@ impl Metrics {
 
     /// 设置总体请求耗时
     #[setter]
-    fn set_total_duration(&mut self, duration: u64) {
-        *self.0.total_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_total_duration(&mut self, duration_ns: u64) {
+        *self.0.total_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     /// 获取域名查询的耗时
@@ -862,8 +862,8 @@ impl Metrics {
 
     /// 设置域名查询的耗时
     #[setter]
-    fn set_name_lookup_duration(&mut self, duration: u64) {
-        *self.0.name_lookup_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_name_lookup_duration(&mut self, duration_ns: u64) {
+        *self.0.name_lookup_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     /// 获取建立连接的耗时
@@ -876,8 +876,8 @@ impl Metrics {
 
     /// 设置建立连接的耗时
     #[setter]
-    fn set_connect_duration(&mut self, duration: u64) {
-        *self.0.connect_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_connect_duration(&mut self, duration_ns: u64) {
+        *self.0.connect_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     /// 获取建立安全连接的耗时
@@ -890,8 +890,8 @@ impl Metrics {
 
     /// 设置建立安全连接的耗时
     #[setter]
-    fn set_secure_connect_duration(&mut self, duration: u64) {
-        *self.0.secure_connect_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_secure_connect_duration(&mut self, duration_ns: u64) {
+        *self.0.secure_connect_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     /// 获取重定向的耗时
@@ -904,8 +904,8 @@ impl Metrics {
 
     /// 设置重定向的耗时
     #[setter]
-    fn set_redirect_duration(&mut self, duration: u64) {
-        *self.0.redirect_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_redirect_duration(&mut self, duration_ns: u64) {
+        *self.0.redirect_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     /// 获取请求和响应数据传输的耗时
@@ -918,8 +918,8 @@ impl Metrics {
 
     /// 设置请求和响应数据传输的耗时
     #[setter]
-    fn set_transfer_duration(&mut self, duration: u64) {
-        *self.0.transfer_duration_mut() = Some(Duration::from_nanos(duration));
+    fn set_transfer_duration(&mut self, duration_ns: u64) {
+        *self.0.transfer_duration_mut() = Some(Duration::from_nanos(duration_ns));
     }
 
     fn __repr__(&self) -> String {

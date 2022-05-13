@@ -366,15 +366,11 @@ impl UploadPolicyBuilder {
     /// 上传策略根据给出的客户端配置指定上传凭证有效期
     #[staticmethod]
     #[args(fields = "**")]
-    #[pyo3(text_signature = "(bucket, lifetime, **fields)")]
-    fn new_for_bucket(
-        bucket: &str,
-        upload_token_lifetime: u64,
-        fields: Option<&PyDict>,
-    ) -> PyResult<Self> {
+    #[pyo3(text_signature = "(bucket, lifetime_secs, **fields)")]
+    fn new_for_bucket(bucket: &str, lifetime_secs: u64, fields: Option<&PyDict>) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_bucket(
             bucket,
-            Duration::from_secs(upload_token_lifetime),
+            Duration::from_secs(lifetime_secs),
         );
         if let Some(fields) = fields {
             Self::set_builder_from_py_dict(&mut builder, fields)?;
@@ -390,17 +386,17 @@ impl UploadPolicyBuilder {
     /// 上传策略根据给出的客户端配置指定上传凭证有效期
     #[staticmethod]
     #[args(fields = "**")]
-    #[pyo3(text_signature = "(bucket, object, lifetime, **fields)")]
+    #[pyo3(text_signature = "(bucket, object, lifetime_secs, **fields)")]
     fn new_for_object(
         bucket: &str,
         object: &str,
-        upload_token_lifetime: u64,
+        lifetime_secs: u64,
         fields: Option<&PyDict>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_object(
             bucket,
             object,
-            Duration::from_secs(upload_token_lifetime),
+            Duration::from_secs(lifetime_secs),
         );
         if let Some(fields) = fields {
             Self::set_builder_from_py_dict(&mut builder, fields)?;
@@ -416,17 +412,17 @@ impl UploadPolicyBuilder {
     /// 上传策略根据给出的客户端配置指定上传凭证有效期
     #[staticmethod]
     #[args(fields = "**")]
-    #[pyo3(text_signature = "(bucket, prefix, lifetime, **fields)")]
+    #[pyo3(text_signature = "(bucket, prefix, lifetime_secs, **fields)")]
     fn new_for_objects_with_prefix(
         bucket: &str,
         prefix: &str,
-        upload_token_lifetime: u64,
+        lifetime_secs: u64,
         fields: Option<&PyDict>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_objects_with_prefix(
             bucket,
             prefix,
-            Duration::from_secs(upload_token_lifetime),
+            Duration::from_secs(lifetime_secs),
         );
         if let Some(fields) = fields {
             Self::set_builder_from_py_dict(&mut builder, fields)?;
@@ -442,15 +438,15 @@ impl UploadPolicyBuilder {
 
     /// 指定上传凭证有效期
     #[pyo3(text_signature = "($self, lifetime)")]
-    fn token_lifetime(&mut self, lifetime: u64) {
-        self.0.token_lifetime(Duration::from_secs(lifetime));
+    fn token_lifetime(&mut self, lifetime_secs: u64) {
+        self.0.token_lifetime(Duration::from_secs(lifetime_secs));
     }
 
     /// 指定上传凭证过期时间
     #[pyo3(text_signature = "($self, deadline)")]
-    fn token_deadline(&mut self, deadline: u64) {
+    fn token_deadline(&mut self, timestamp: u64) {
         self.0
-            .token_deadline(SystemTime::UNIX_EPOCH + Duration::from_secs(deadline));
+            .token_deadline(SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp));
     }
 
     /// 仅允许创建新的对象，不允许覆盖和修改同名对象
@@ -546,10 +542,10 @@ impl UploadPolicyBuilder {
 
     /// 对象生命周期
     ///
-    /// 精确到天
+    /// 单位为秒，但精确到天
     #[pyo3(text_signature = "($self, lifetime)")]
-    fn object_lifetime(&mut self, lifetime: u64) {
-        self.0.object_lifetime(Duration::from_secs(lifetime));
+    fn object_lifetime(&mut self, lifetime_secs: u64) {
+        self.0.object_lifetime(Duration::from_secs(lifetime_secs));
     }
 
     fn __repr__(&self) -> String {
@@ -830,9 +826,7 @@ impl FromUploadPolicy {
 ///
 /// 根据存储空间的快速生成上传凭证实例
 #[pyclass(extends = UploadTokenProvider)]
-#[pyo3(
-    text_signature = "(bucket, upload_token_lifetime, credential, /, on_policy_generated = None)"
-)]
+#[pyo3(text_signature = "(bucket, lifetime_secs, credential, /, on_policy_generated = None)")]
 struct BucketUploadTokenProvider;
 
 #[pymethods]
@@ -841,13 +835,13 @@ impl BucketUploadTokenProvider {
     #[args(on_policy_generated = "None")]
     fn new(
         bucket: &str,
-        upload_token_lifetime: u64,
+        lifetime_secs: u64,
         credential: CredentialProvider,
         on_policy_generated: Option<&PyAny>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::BucketUploadTokenProvider::builder(
             bucket,
-            Duration::from_secs(upload_token_lifetime),
+            Duration::from_secs(lifetime_secs),
             credential,
         );
         if let Some(on_policy_generated) = on_policy_generated {
@@ -884,7 +878,7 @@ impl BucketUploadTokenProvider {
 /// 根据对象的快速生成上传凭证实例
 #[pyclass(extends = UploadTokenProvider)]
 #[pyo3(
-    text_signature = "(bucket, object, upload_token_lifetime, credential, /, on_policy_generated = None)"
+    text_signature = "(bucket, object, lifetime_secs, credential, /, on_policy_generated = None)"
 )]
 struct ObjectUploadTokenProvider;
 
@@ -895,14 +889,14 @@ impl ObjectUploadTokenProvider {
     fn new(
         bucket: &str,
         object: &str,
-        upload_token_lifetime: u64,
+        lifetime_secs: u64,
         credential: CredentialProvider,
         on_policy_generated: Option<&PyAny>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::ObjectUploadTokenProvider::builder(
             bucket,
             object,
-            Duration::from_secs(upload_token_lifetime),
+            Duration::from_secs(lifetime_secs),
             credential,
         );
         if let Some(on_policy_generated) = on_policy_generated {
