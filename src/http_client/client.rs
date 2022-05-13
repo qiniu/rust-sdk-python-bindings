@@ -1,10 +1,12 @@
 use crate::{
     credential::CredentialProvider,
     exceptions::{
-        QiniuApiCallError, QiniuAuthorizationError, QiniuEmptyChainedResolver, QiniuTrustDNSError,
+        QiniuApiCallError, QiniuApiCallErrorInfo, QiniuAuthorizationError,
+        QiniuEmptyChainedResolver, QiniuTrustDNSError,
     },
     http::{AsyncHttpRequest, Metrics, SyncHttpRequest},
     upload_token::UploadTokenProvider,
+    utils::{extract_ip_addrs_with_port, parse_domain_with_port, parse_ip_addr_with_port},
 };
 use pyo3::prelude::*;
 use qiniu_sdk::prelude::AuthorizationProvider;
@@ -20,6 +22,12 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<CachedResolver>()?;
     m.add_class::<ChainedResolver>()?;
     m.add_class::<TrustDnsResolver>()?;
+    m.add_class::<Chooser>()?;
+    m.add_class::<DirectChooser>()?;
+    m.add_class::<IpChooser>()?;
+    m.add_class::<SubnetChooser>()?;
+    m.add_class::<ShuffledChooser>()?;
+    m.add_class::<NeverEmptyHandedChooser>()?;
 
     Ok(())
 }
@@ -138,6 +146,12 @@ impl RetriedStatsInfo {
 
     fn __str__(&self) -> String {
         format!("{}", self.0)
+    }
+}
+
+impl AsRef<qiniu_sdk::http_client::RetriedStatsInfo> for RetriedStatsInfo {
+    fn as_ref(&self) -> &qiniu_sdk::http_client::RetriedStatsInfo {
+        &self.0
     }
 }
 
@@ -427,24 +441,337 @@ impl TrustDnsResolver {
     }
 }
 
-/// 选择器反馈
-///
-/// 用以修正选择器的选择逻辑，优化选择结果
-#[pyclass]
-#[derive(Clone)]
-struct ChooserFeedback {
-    ips: Vec<qiniu_sdk::http_client::IpAddrWithPort>,
-    domain: Option<qiniu_sdk::http_client::DomainWithPort>,
-    retried: RetriedStatsInfo,
-    metrics: Metrics,
-}
-
 /// 选择 IP 地址接口
 ///
 /// 还提供了对选择结果的反馈接口，用以修正自身选择逻辑，优化选择结果
 #[pyclass(subclass)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Chooser(Box<dyn qiniu_sdk::http_client::Chooser>);
 
 #[pymethods]
-impl Chooser {}
+impl Chooser {
+    /// 选择 IP 地址列表
+    #[pyo3(text_signature = "(ips, /, domain_with_port = None)")]
+    #[args(domain_with_port = "None")]
+    fn choose(
+        &self,
+        ips: Vec<&str>,
+        domain_with_port: Option<&str>,
+        py: Python<'_>,
+    ) -> PyResult<Vec<String>> {
+        let ips = ips
+            .into_iter()
+            .map(parse_ip_addr_with_port)
+            .collect::<PyResult<Vec<_>>>()?;
+        let domain_with_port = domain_with_port
+            .map(parse_domain_with_port)
+            .map_or(Ok(None), |v| v.map(Some))?;
+        let mut builder = qiniu_sdk::http_client::ChooseOptions::builder();
+        if let Some(domain_with_port) = &domain_with_port {
+            builder.domain(domain_with_port);
+        }
+        Ok(py.allow_threads(|| {
+            self.0
+                .choose(&ips, builder.build())
+                .into_iter()
+                .map(|ip| ip.to_string())
+                .collect()
+        }))
+    }
+
+    /// 异步选择 IP 地址列表
+    #[pyo3(text_signature = "(ips, /, domain_with_port = None)")]
+    #[args(domain_with_port = "None")]
+    fn async_choose<'p>(
+        &self,
+        ips: Vec<String>,
+        domain_with_port: Option<&str>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let chooser = self.0.to_owned();
+        let ips = ips
+            .iter()
+            .map(|s| parse_ip_addr_with_port(s.as_str()))
+            .collect::<PyResult<Vec<_>>>()?;
+        let domain_with_port = domain_with_port
+            .map(parse_domain_with_port)
+            .map_or(Ok(None), |v| v.map(Some))?;
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut builder = qiniu_sdk::http_client::ChooseOptions::builder();
+            if let Some(domain_with_port) = &domain_with_port {
+                builder.domain(domain_with_port);
+            }
+            Ok(chooser
+                .async_choose(&ips, builder.build())
+                .await
+                .into_iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// 反馈选择的 IP 地址列表的结果
+    #[pyo3(
+        text_signature = "(ips, /, domain = None, retried = None, metrics = None, error = None)"
+    )]
+    #[args(domain = "None", retried = "None", metrics = "None", error = "None")]
+    fn feedback(
+        &self,
+        ips: Vec<&str>,
+        domain: Option<&str>,
+        retried: Option<RetriedStatsInfo>,
+        metrics: Option<Metrics>,
+        error: Option<&QiniuApiCallError>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        let ips = extract_ip_addrs_with_port(&ips)?;
+        let domain = domain
+            .map(parse_domain_with_port)
+            .map_or(Ok(None), |v| v.map(Some))?;
+        let error = error.map(PyErr::from);
+        let error = error
+            .as_ref()
+            .map(Self::convert_api_call_error)
+            .map_or(Ok(None), |v| v.map(Some))?;
+        let feedback = Self::make_feedback(
+            &ips,
+            domain.as_ref(),
+            retried.as_ref(),
+            metrics.as_ref(),
+            error.as_ref(),
+        )?;
+        py.allow_threads(|| self.0.feedback(feedback));
+        Ok(())
+    }
+
+    /// 异步反馈选择的 IP 地址列表的结果
+    #[pyo3(
+        text_signature = "(ips, /, domain = None, retried = None, metrics = None, error = None)"
+    )]
+    #[args(domain = "None", retried = "None", metrics = "None", error = "None")]
+    fn async_feedback<'p>(
+        &self,
+        ips: Vec<&str>,
+        domain: Option<&str>,
+        retried: Option<RetriedStatsInfo>,
+        metrics: Option<Metrics>,
+        error: Option<&QiniuApiCallError>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let chooser = self.0.to_owned();
+        let ips = extract_ip_addrs_with_port(&ips)?;
+        let domain = domain
+            .map(parse_domain_with_port)
+            .map_or(Ok(None), |v| v.map(Some))?;
+        let error = error.map(PyErr::from);
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let error = error
+                .as_ref()
+                .map(Self::convert_api_call_error)
+                .map_or(Ok(None), |v| v.map(Some))?;
+            chooser
+                .async_feedback(Self::make_feedback(
+                    &ips,
+                    domain.as_ref(),
+                    retried.as_ref(),
+                    metrics.as_ref(),
+                    error.as_ref(),
+                )?)
+                .await;
+            Ok(())
+        })
+    }
+}
+
+impl qiniu_sdk::http_client::Chooser for Chooser {
+    fn choose(
+        &self,
+        ips: &[qiniu_sdk::http_client::IpAddrWithPort],
+        opts: qiniu_sdk::http_client::ChooseOptions,
+    ) -> qiniu_sdk::http_client::ChosenResults {
+        self.0.choose(ips, opts)
+    }
+
+    fn feedback(&self, feedback: qiniu_sdk::http_client::ChooserFeedback) {
+        self.0.feedback(feedback)
+    }
+
+    fn async_choose<'a>(
+        &'a self,
+        ips: &'a [qiniu_sdk::http_client::IpAddrWithPort],
+        opts: qiniu_sdk::http_client::ChooseOptions<'a>,
+    ) -> futures::future::BoxFuture<'a, qiniu_sdk::http_client::ChosenResults> {
+        self.0.async_choose(ips, opts)
+    }
+
+    fn async_feedback<'a>(
+        &'a self,
+        feedback: qiniu_sdk::http_client::ChooserFeedback<'a>,
+    ) -> futures::future::BoxFuture<'a, ()> {
+        self.0.async_feedback(feedback)
+    }
+}
+
+impl Chooser {
+    fn make_feedback<'a>(
+        ips: &'a [qiniu_sdk::http_client::IpAddrWithPort],
+        domain: Option<&'a qiniu_sdk::http_client::DomainWithPort>,
+        retried: Option<&'a RetriedStatsInfo>,
+        metrics: Option<&'a Metrics>,
+        error: Option<&'a QiniuApiCallErrorInfo>,
+    ) -> PyResult<qiniu_sdk::http_client::ChooserFeedback<'a>> {
+        let mut builder = qiniu_sdk::http_client::ChooserFeedback::builder(ips);
+        if let Some(domain) = domain {
+            builder.domain(domain);
+        }
+        if let Some(retried) = retried {
+            builder.retried(retried.as_ref());
+        }
+        if let Some(metrics) = metrics {
+            builder.metrics(metrics.as_ref());
+        }
+        if let Some(error) = error {
+            builder.error(error.as_ref());
+        }
+        Ok(builder.build())
+    }
+
+    fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
+        Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
+    }
+}
+
+/// 直接选择器
+///
+/// 不做任何筛选，也不接受任何反馈，直接将给出的 IP 地址列表返回
+#[pyclass(extends = Chooser)]
+#[pyo3(text_signature = "()")]
+#[derive(Clone)]
+struct DirectChooser;
+
+#[pymethods]
+impl DirectChooser {
+    #[new]
+    fn new() -> (Self, Chooser) {
+        (
+            Self,
+            Chooser(Box::new(qiniu_sdk::http_client::DirectChooser)),
+        )
+    }
+}
+
+/// IP 地址选择器
+///
+/// 包含 IP 地址黑名单，一旦被反馈 API 调用失败，则将所有相关 IP 地址冻结一段时间
+#[pyclass(extends = Chooser)]
+#[pyo3(text_signature = "(/, block_duration_secs = None, shrink_interval_secs = None)")]
+#[derive(Clone)]
+struct IpChooser;
+
+#[pymethods]
+impl IpChooser {
+    #[new]
+    #[args(block_duration_secs = "None", shrink_interval_secs = "None")]
+    fn new(block_duration_secs: Option<u64>, shrink_interval_secs: Option<u64>) -> (Self, Chooser) {
+        let mut builder = qiniu_sdk::http_client::IpChooser::builder();
+        if let Some(block_duration_secs) = block_duration_secs {
+            builder.block_duration(Duration::from_secs(block_duration_secs));
+        }
+        if let Some(shrink_interval_secs) = shrink_interval_secs {
+            builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
+        }
+        (Self, Chooser(Box::new(builder.build())))
+    }
+}
+
+/// 子网选择器
+///
+/// 包含子网黑名单，一旦被反馈 API 调用失败，则将所有相关子网内 IP 地址冻结一段时间
+#[pyclass(extends = Chooser)]
+#[pyo3(
+    text_signature = "(/, block_duration_secs = None, shrink_interval_secs = None, ipv4_netmask_prefix_length = None, ipv6_netmask_prefix_length = None)"
+)]
+#[derive(Clone)]
+struct SubnetChooser;
+
+#[pymethods]
+impl SubnetChooser {
+    #[new]
+    #[args(
+        block_duration_secs = "None",
+        shrink_interval_secs = "None",
+        ipv4_netmask_prefix_length = "None",
+        ipv6_netmask_prefix_length = "None"
+    )]
+    fn new(
+        block_duration_secs: Option<u64>,
+        shrink_interval_secs: Option<u64>,
+        ipv4_netmask_prefix_length: Option<u8>,
+        ipv6_netmask_prefix_length: Option<u8>,
+    ) -> (Self, Chooser) {
+        let mut builder = qiniu_sdk::http_client::SubnetChooser::builder();
+        if let Some(block_duration_secs) = block_duration_secs {
+            builder.block_duration(Duration::from_secs(block_duration_secs));
+        }
+        if let Some(shrink_interval_secs) = shrink_interval_secs {
+            builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
+        }
+        if let Some(ipv4_netmask_prefix_length) = ipv4_netmask_prefix_length {
+            builder.ipv4_netmask_prefix_length(ipv4_netmask_prefix_length);
+        }
+        if let Some(ipv6_netmask_prefix_length) = ipv6_netmask_prefix_length {
+            builder.ipv6_netmask_prefix_length(ipv6_netmask_prefix_length);
+        }
+        (Self, Chooser(Box::new(builder.build())))
+    }
+}
+
+/// 随机选择器
+///
+/// 基于一个选择器实例，但将其返回的选择结果打乱
+#[pyclass(extends = Chooser)]
+#[pyo3(text_signature = "(chooser)")]
+#[derive(Clone)]
+struct ShuffledChooser;
+
+#[pymethods]
+impl ShuffledChooser {
+    #[new]
+    fn new(chooser: Chooser) -> (Self, Chooser) {
+        (
+            Self,
+            Chooser(Box::new(qiniu_sdk::http_client::ShuffledChooser::new(
+                chooser,
+            ))),
+        )
+    }
+}
+
+/// 永不空手的选择器
+///
+/// 确保 [`Chooser`] 实例不会因为所有可选择的 IP 地址都被屏蔽而导致 HTTP 客户端直接返回错误，
+/// 在内置的 [`Chooser`] 没有返回结果时，将会随机返回一定比例的 IP 地址供 HTTP 客户端做一轮尝试。
+#[pyclass(extends = Chooser)]
+#[pyo3(text_signature = "(chooser, random_choose_fraction)")]
+#[derive(Clone)]
+struct NeverEmptyHandedChooser;
+
+#[pymethods]
+impl NeverEmptyHandedChooser {
+    #[new]
+    fn new(chooser: Chooser, random_choose_fraction: &PyAny) -> PyResult<(Self, Chooser)> {
+        let numerator = random_choose_fraction
+            .getattr("numerator")?
+            .extract::<usize>()?;
+        let denominator = random_choose_fraction
+            .getattr("denominator")?
+            .extract::<usize>()?;
+        let random_choose_ratio = qiniu_sdk::http_client::Ratio::new(numerator, denominator);
+        Ok((
+            Self,
+            Chooser(Box::new(
+                qiniu_sdk::http_client::NeverEmptyHandedChooser::new(chooser, random_choose_ratio),
+            )),
+        ))
+    }
+}

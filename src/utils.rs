@@ -1,17 +1,20 @@
 use super::{
     exceptions::{
-        QiniuBodySizeMissingError, QiniuHeaderValueEncodingError, QiniuInvalidEndpointError,
-        QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
-        QiniuInvalidMethodError, QiniuInvalidPortError, QiniuInvalidStatusCodeError,
-        QiniuInvalidURLError,
+        QiniuBodySizeMissingError, QiniuHeaderValueEncodingError, QiniuInvalidDomainWithPortError,
+        QiniuInvalidEndpointError, QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError,
+        QiniuInvalidIpAddrError, QiniuInvalidIpAddrWithPortError, QiniuInvalidMethodError,
+        QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
     },
     http_client::Endpoint,
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
-use qiniu_sdk::http::{
-    header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName, HeaderValue,
-    Method, StatusCode, SyncRequestBody, SyncResponseBody, Uri,
+use qiniu_sdk::{
+    http::{
+        header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName,
+        HeaderValue, Method, StatusCode, SyncRequestBody, SyncResponseBody, Uri,
+    },
+    http_client::{DomainWithPort, IpAddrWithPort},
 };
 use smart_default::SmartDefault;
 use std::{
@@ -396,6 +399,25 @@ pub(super) fn parse_ip_addr(ip_addr: &str) -> PyResult<IpAddr> {
     ip_addr
         .parse::<IpAddr>()
         .map_err(QiniuInvalidIpAddrError::from_err)
+}
+
+pub(super) fn parse_domain_with_port(ip_addr: &str) -> PyResult<DomainWithPort> {
+    ip_addr
+        .parse::<DomainWithPort>()
+        .map_err(QiniuInvalidDomainWithPortError::from_err)
+}
+
+pub(super) fn extract_ip_addrs_with_port(ip_addrs: &[&str]) -> PyResult<Vec<IpAddrWithPort>> {
+    ip_addrs
+        .iter()
+        .map(|&s| parse_ip_addr_with_port(s))
+        .collect()
+}
+
+pub(super) fn parse_ip_addr_with_port(ip_addr: &str) -> PyResult<IpAddrWithPort> {
+    ip_addr
+        .parse::<IpAddrWithPort>()
+        .map_err(QiniuInvalidIpAddrWithPortError::from_err)
 }
 
 pub(super) fn extract_endpoints(

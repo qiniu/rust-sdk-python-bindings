@@ -921,6 +921,12 @@ impl Metrics {
     }
 }
 
+impl AsRef<qiniu_sdk::http::Metrics> for Metrics {
+    fn as_ref(&self) -> &qiniu_sdk::http::Metrics {
+        &self.0
+    }
+}
+
 #[pyclass(subclass)]
 struct ResponseParts(qiniu_sdk::http::ResponseParts);
 

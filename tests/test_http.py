@@ -92,7 +92,7 @@ class TestAsyncHttpRequest(unittest.TestCase):
 
 class TestMetrics(unittest.TestCase):
     def test_metrics(self):
-        metrics = http.Metrics(total_duration=1234567890)
+        metrics = http.Metrics(total_duration_ns=1234567890)
         self.assertEqual(metrics.total_duration, 1234567890)
         metrics.total_duration = 9876543210
         self.assertEqual(metrics.total_duration, 9876543210)

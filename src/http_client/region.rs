@@ -1,10 +1,10 @@
 use crate::{
     credential::CredentialProvider,
     exceptions::{
-        QiniuApiCallError, QiniuEmptyRegionsProvider, QiniuInvalidDomainWithPortError,
-        QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError,
+        QiniuApiCallError, QiniuEmptyRegionsProvider, QiniuInvalidEndpointError,
+        QiniuInvalidIpAddrWithPortError,
     },
-    utils::extract_endpoints,
+    utils::{extract_endpoints, parse_domain_with_port},
 };
 use pyo3::{prelude::*, pyclass::CompareOp};
 use qiniu_sdk::http_client::EndpointsGetOptions;
@@ -40,12 +40,11 @@ impl DomainWithPort {
     #[args(port = "None")]
     fn new(domain: String, port: Option<u16>) -> PyResult<Self> {
         let host = if let Some(port) = port {
-            format!("{}:{}", domain, port).parse()
+            format!("{}:{}", domain, port)
         } else {
-            domain.parse()
-        }
-        .map_err(QiniuInvalidDomainWithPortError::from_err)?;
-        Ok(Self(host))
+            domain
+        };
+        Ok(Self(parse_domain_with_port(&host)?))
     }
 
     /// 获取域名

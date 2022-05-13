@@ -68,7 +68,8 @@ macro_rules! create_exception_with_info {
         create_exception!($module, $name, $base, $doc);
 
         #[pyclass]
-        pub(super) struct $inner_name($inner_type);
+        #[derive(Clone)]
+        pub(super) struct $inner_name(std::sync::Arc<$inner_type>);
 
         #[pymethods]
         impl $inner_name {
@@ -83,13 +84,13 @@ macro_rules! create_exception_with_info {
 
         impl From<$inner_type> for $inner_name {
             fn from(t: $inner_type) -> $inner_name {
-                $inner_name(t)
+                $inner_name(std::sync::Arc::new(t))
             }
         }
 
-        impl From<$inner_name> for $inner_type {
-            fn from(t: $inner_name) -> $inner_type {
-                t.0
+        impl AsRef<$inner_type> for $inner_name {
+            fn as_ref(&self) -> &$inner_type {
+                &self.0
             }
         }
 
@@ -101,7 +102,7 @@ macro_rules! create_exception_with_info {
             }
 
             pub(super) fn from_err(err: $inner_type) -> PyErr {
-                Self::new_err($inner_name(err))
+                Self::new_err($inner_name::from(err))
             }
         }
     };

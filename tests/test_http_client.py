@@ -1,6 +1,7 @@
 from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
 from aiohttp import web
 import unittest
+import fractions
 
 
 class TestDomainWithPort(unittest.TestCase):
@@ -729,3 +730,56 @@ class TestResolver(unittest.IsolatedAsyncioTestCase):
         resolver = http_client.TrustDnsResolver()
         domains = await resolver.async_resolve('upload.qiniup.com')
         self.assertTrue(len(domains) > 0)
+
+
+class TestChoose(unittest.IsolatedAsyncioTestCase):
+    async def test_chooser(self):
+        chooser = http_client.DirectChooser()
+        chosen = await chooser.async_choose(['127.0.0.1:8000', '127.0.0.1:8001', '127.0.0.1:8002'])
+        self.assertEqual(
+            chosen, ['127.0.0.1:8000', '127.0.0.1:8001', '127.0.0.1:8002'])
+
+    async def test_ip_chooser(self):
+        chooser = http_client.IpChooser()
+        chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
+        self.assertEqual(chosen, ['127.0.0.1', '127.0.0.2', '127.0.1.1'])
+        try:
+            provider = http_client.BucketDomainsQueryer.in_memory(
+                uc_endpoints=http_client.Endpoints(['127.0.0.1']))
+            query = provider.query(credential.Credential(
+                'fakeak', 'fakesk'), 'fakebucket')
+            await query.async_get()
+            self.fail('should not be here')
+        except Exception as e:
+            await chooser.async_feedback(['127.0.0.1'], error=e)
+            chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
+            self.assertEqual(chosen, ['127.0.0.2', '127.0.1.1'])
+
+    async def test_subnet_chooser(self):
+        chooser = http_client.SubnetChooser()
+        try:
+            provider = http_client.BucketDomainsQueryer.in_memory(
+                uc_endpoints=http_client.Endpoints(['127.0.0.1']))
+            query = provider.query(credential.Credential(
+                'fakeak', 'fakesk'), 'fakebucket')
+            await query.async_get()
+            self.fail('should not be here')
+        except Exception as e:
+            await chooser.async_feedback(['127.0.0.1', '127.0.0.2'], error=e)
+            chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
+            self.assertEqual(chosen, ['127.0.1.1'])
+
+    async def test_never_empty_handed_chooser(self):
+        chooser = http_client.NeverEmptyHandedChooser(
+            http_client.IpChooser(), fractions.Fraction(1, 2))
+        try:
+            provider = http_client.BucketDomainsQueryer.in_memory(
+                uc_endpoints=http_client.Endpoints(['127.0.0.1', '127.0.0.2', '127.0.1.1']))
+            query = provider.query(credential.Credential(
+                'fakeak', 'fakesk'), 'fakebucket')
+            await query.async_get()
+            self.fail('should not be here')
+        except Exception as e:
+            await chooser.async_feedback(['127.0.0.1', '127.0.0.2', '127.0.1.1'], error=e)
+            chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
+            self.assertEqual(len(chosen), 2)

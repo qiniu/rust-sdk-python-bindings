@@ -1,10 +1,12 @@
 mod credential;
 mod etag;
-mod exceptions;
+pub mod exceptions;
 mod http;
 mod http_client;
 mod upload_token;
 mod utils;
+
+pub use exceptions::QiniuApiCallError;
 
 use exceptions::QiniuUserAgentInitializeError;
 use pyo3::prelude::*;
