@@ -2,14 +2,12 @@ use crate::{
     credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuEmptyRegionsProvider, QiniuInvalidDomainWithPortError,
-        QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError, QiniuInvalidServiceNameError,
+        QiniuInvalidEndpointError, QiniuInvalidIpAddrWithPortError,
     },
     utils::extract_endpoints,
 };
 use pyo3::{prelude::*, pyclass::CompareOp};
-use qiniu_sdk::http_client::{
-    DomainWithPortParseError, EndpointParseError, EndpointsGetOptions, IpAddrWithPortParseError,
-};
+use qiniu_sdk::http_client::EndpointsGetOptions;
 use std::{path::PathBuf, time::Duration};
 
 pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
@@ -46,9 +44,7 @@ impl DomainWithPort {
         } else {
             domain.parse()
         }
-        .map_err(|err: DomainWithPortParseError| {
-            QiniuInvalidDomainWithPortError::new_err(err.to_string())
-        })?;
+        .map_err(QiniuInvalidDomainWithPortError::from_err)?;
         Ok(Self(host))
     }
 
@@ -98,9 +94,7 @@ impl IpAddrWithPort {
         } else {
             ip_addr.parse()
         }
-        .map_err(|err: IpAddrWithPortParseError| {
-            QiniuInvalidIpAddrWithPortError::new_err(err.to_string())
-        })?;
+        .map_err(QiniuInvalidIpAddrWithPortError::from_err)?;
         Ok(Self(host))
     }
 
@@ -150,7 +144,7 @@ impl Endpoint {
         } else {
             domain_or_ip_addr.parse()
         }
-        .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))?;
+        .map_err(QiniuInvalidEndpointError::from_err)?;
         Ok(Self(host))
     }
 
@@ -233,22 +227,17 @@ impl From<ServiceName> for qiniu_sdk::http_client::ServiceName {
     }
 }
 
-impl TryFrom<qiniu_sdk::http_client::ServiceName> for ServiceName {
-    type Error = PyErr;
-
-    fn try_from(svc: qiniu_sdk::http_client::ServiceName) -> Result<Self, Self::Error> {
+impl From<qiniu_sdk::http_client::ServiceName> for ServiceName {
+    fn from(svc: qiniu_sdk::http_client::ServiceName) -> Self {
         match svc {
-            qiniu_sdk::http_client::ServiceName::Up => Ok(ServiceName::Up),
-            qiniu_sdk::http_client::ServiceName::Io => Ok(ServiceName::Io),
-            qiniu_sdk::http_client::ServiceName::Uc => Ok(ServiceName::Uc),
-            qiniu_sdk::http_client::ServiceName::Rs => Ok(ServiceName::Rs),
-            qiniu_sdk::http_client::ServiceName::Rsf => Ok(ServiceName::Rsf),
-            qiniu_sdk::http_client::ServiceName::Api => Ok(ServiceName::Api),
-            qiniu_sdk::http_client::ServiceName::S3 => Ok(ServiceName::S3),
-            _ => Err(QiniuInvalidServiceNameError::new_err(format!(
-                "Unrecognized ServiceName {:?}",
-                svc
-            ))),
+            qiniu_sdk::http_client::ServiceName::Up => ServiceName::Up,
+            qiniu_sdk::http_client::ServiceName::Io => ServiceName::Io,
+            qiniu_sdk::http_client::ServiceName::Uc => ServiceName::Uc,
+            qiniu_sdk::http_client::ServiceName::Rs => ServiceName::Rs,
+            qiniu_sdk::http_client::ServiceName::Rsf => ServiceName::Rsf,
+            qiniu_sdk::http_client::ServiceName::Api => ServiceName::Api,
+            qiniu_sdk::http_client::ServiceName::S3 => ServiceName::S3,
+            _ => unreachable!("Unrecognized ServiceName {:?}", svc),
         }
     }
 }
@@ -286,7 +275,7 @@ impl EndpointsProvider {
             .build();
         let endpoints = py
             .allow_threads(|| self.0.get_endpoints(opts))
-            .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+            .map_err(QiniuApiCallError::from_err)?
             .into_owned();
         Self::make_initializer(endpoints, py)
     }
@@ -310,7 +299,7 @@ impl EndpointsProvider {
             let endpoints = provider
                 .async_get_endpoints(opts)
                 .await
-                .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+                .map_err(QiniuApiCallError::from_err)?
                 .into_owned();
             Python::with_gil(|py| Self::make_initializer(endpoints, py))
         })
@@ -416,7 +405,7 @@ impl RegionsProvider {
     fn get(&self, py: Python<'_>) -> PyResult<Py<Region>> {
         let region = py
             .allow_threads(|| self.0.get(Default::default()))
-            .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+            .map_err(QiniuApiCallError::from_err)?
             .into_region();
         Self::make_initializer(region, py)
     }
@@ -425,7 +414,7 @@ impl RegionsProvider {
     fn get_all(&self, py: Python<'_>) -> PyResult<Vec<Py<Region>>> {
         let regions = py
             .allow_threads(|| self.0.get_all(Default::default()))
-            .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+            .map_err(QiniuApiCallError::from_err)?
             .into_regions()
             .into_iter()
             .map(|region| Self::make_initializer(region, py))
@@ -440,7 +429,7 @@ impl RegionsProvider {
             let region = provider
                 .async_get(Default::default())
                 .await
-                .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+                .map_err(QiniuApiCallError::from_err)?
                 .into_region();
             Python::with_gil(|py| Self::make_initializer(region, py))
         })
@@ -453,7 +442,7 @@ impl RegionsProvider {
             let regions = provider
                 .async_get_all(Default::default())
                 .await
-                .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+                .map_err(QiniuApiCallError::from_err)?
                 .into_regions()
                 .into_iter()
                 .map(|region| Python::with_gil(|py| Self::make_initializer(region, py)))

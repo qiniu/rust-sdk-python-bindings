@@ -1,19 +1,17 @@
 use super::{
     exceptions::{
-        QiniuBodySizeMissingError, QiniuInvalidEndpointError, QiniuInvalidHeaderNameError,
-        QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError, QiniuInvalidMethodError,
-        QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
+        QiniuBodySizeMissingError, QiniuHeaderValueEncodingError, QiniuInvalidEndpointError,
+        QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError,
+        QiniuInvalidMethodError, QiniuInvalidPortError, QiniuInvalidStatusCodeError,
+        QiniuInvalidURLError,
     },
     http_client::Endpoint,
 };
 use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
 use pyo3::{prelude::*, types::PyTuple};
-use qiniu_sdk::{
-    http::{
-        header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName,
-        HeaderValue, Method, StatusCode, SyncRequestBody, SyncResponseBody, Uri,
-    },
-    http_client::EndpointParseError,
+use qiniu_sdk::http::{
+    header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName, HeaderValue,
+    Method, StatusCode, SyncRequestBody, SyncResponseBody, Uri,
 };
 use smart_default::SmartDefault;
 use std::{
@@ -264,16 +262,14 @@ fn make_io_error_from_py_err(err: PyErr) -> IoError {
 }
 
 pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {
-    let url = url
-        .parse::<Uri>()
-        .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
+    let url = url.parse::<Uri>().map_err(QiniuInvalidURLError::from_err)?;
     Ok(url)
 }
 
 pub(super) fn parse_method(method: &str) -> PyResult<Method> {
     let method = method
         .parse::<Method>()
-        .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
+        .map_err(QiniuInvalidMethodError::from_err)?;
     Ok(method)
 }
 
@@ -283,10 +279,10 @@ pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<Header
         .map(|(name, value)| {
             let name = name
                 .parse::<HeaderName>()
-                .map_err(|err| QiniuInvalidHeaderNameError::new_err(err.to_string()))?;
+                .map_err(QiniuInvalidHeaderNameError::from_err)?;
             let value = value
                 .parse::<HeaderValue>()
-                .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?;
+                .map_err(QiniuInvalidHeaderValueError::from_err)?;
             Ok((name, value))
         })
         .collect()
@@ -301,14 +297,14 @@ pub(super) fn convert_headers_to_hashmap(headers: &HeaderMap) -> PyResult<HashMa
                 .map(|value| (name.to_string(), value.to_string()))
         })
         .collect::<Result<_, ToStrError>>()
-        .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))
+        .map_err(QiniuHeaderValueEncodingError::from_err)
 }
 
 pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
     if let Some(header_value) = header_value {
         let header_value = header_value
             .parse::<HeaderValue>()
-            .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?;
+            .map_err(QiniuInvalidHeaderValueError::from_err)?;
         Ok(Some(header_value))
     } else {
         Ok(None)
@@ -321,7 +317,7 @@ pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {
         .map(|ip_addr| {
             ip_addr
                 .parse::<IpAddr>()
-                .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
+                .map_err(QiniuInvalidIpAddrError::from_err)
         })
         .collect()
 }
@@ -393,14 +389,13 @@ pub(super) fn extract_async_response_body(body: PyObject, py: Python<'_>) -> Asy
 }
 
 pub(super) fn parse_status_code(status_code: u16) -> PyResult<StatusCode> {
-    StatusCode::from_u16(status_code)
-        .map_err(|err| QiniuInvalidStatusCodeError::new_err(err.to_string()))
+    StatusCode::from_u16(status_code).map_err(QiniuInvalidStatusCodeError::from_err)
 }
 
 pub(super) fn parse_ip_addr(ip_addr: &str) -> PyResult<IpAddr> {
     ip_addr
         .parse::<IpAddr>()
-        .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))
+        .map_err(QiniuInvalidIpAddrError::from_err)
 }
 
 pub(super) fn extract_endpoints(
@@ -413,11 +408,11 @@ pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_cli
     if let Ok((domain_or_ip_addr, port)) = endpoint.extract::<(&str, u16)>() {
         format!("{}:{}", domain_or_ip_addr, port)
             .parse()
-            .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))
+            .map_err(QiniuInvalidEndpointError::from_err)
     } else if let Ok(domain_or_ip_addr) = endpoint.extract::<&str>() {
         domain_or_ip_addr
             .parse()
-            .map_err(|err: EndpointParseError| QiniuInvalidEndpointError::new_err(err.to_string()))
+            .map_err(QiniuInvalidEndpointError::from_err)
     } else {
         Ok(endpoint.extract::<Endpoint>()?.into())
     }

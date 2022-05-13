@@ -1,8 +1,8 @@
 use super::{
     exceptions::{
-        QiniuBodySizeMissingError, QiniuDataLockedError, QiniuHttpCallError,
-        QiniuInvalidHeaderValueError, QiniuInvalidHttpVersionError, QiniuInvalidIpAddrError,
-        QiniuInvalidMethodError, QiniuInvalidURLError, QiniuIsahcError,
+        QiniuBodySizeMissingError, QiniuDataLockedError, QiniuHeaderValueEncodingError,
+        QiniuHttpCallError, QiniuInvalidIpAddrError, QiniuInvalidMethodError, QiniuInvalidURLError,
+        QiniuIsahcError,
     },
     utils::{
         convert_headers_to_hashmap, extract_async_request_body, extract_async_response_body,
@@ -64,7 +64,7 @@ impl HttpCaller {
         let response = py.allow_threads(|| {
             self.0
                 .call(&mut request.0)
-                .map_err(|err| QiniuHttpCallError::new_err(err.to_string()))
+                .map_err(QiniuHttpCallError::from_err)
         })?;
         let (parts, body) = response.into_parts_and_body();
         Py::new(py, (SyncHttpResponse(body), ResponseParts(parts)))
@@ -78,7 +78,7 @@ impl HttpCaller {
             let response = http_caller
                 .async_call(&mut *request.0.lock().await)
                 .await
-                .map_err(|err| QiniuHttpCallError::new_err(err.to_string()))?;
+                .map_err(QiniuHttpCallError::from_err)?;
             let (parts, body) = response.into_parts_and_body();
             Python::with_gil(|py| {
                 Py::new(
@@ -107,8 +107,7 @@ impl IsahcHttpCaller {
         Ok((
             IsahcHttpCaller,
             HttpCaller(Arc::new(
-                qiniu_sdk::isahc::Client::default_client()
-                    .map_err(|err| QiniuIsahcError::new_err(err.to_string()))?,
+                qiniu_sdk::isahc::Client::default_client().map_err(QiniuIsahcError::from_err)?,
             )),
         ))
     }
@@ -422,16 +421,14 @@ impl SyncHttpRequest {
     /// 设置 HTTP 请求 URL
     #[setter]
     fn set_url(&mut self, url: &str) -> PyResult<()> {
-        *self.0.url_mut() = url
-            .parse::<Uri>()
-            .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
+        *self.0.url_mut() = url.parse::<Uri>().map_err(QiniuInvalidURLError::from_err)?;
         Ok(())
     }
 
     /// 获取请求 HTTP 版本
     #[getter]
-    fn get_version(&self) -> PyResult<Version> {
-        self.0.version().try_into()
+    fn get_version(&self) -> Version {
+        self.0.version().into()
     }
 
     /// 设置请求 HTTP 版本
@@ -451,7 +448,7 @@ impl SyncHttpRequest {
     fn set_method(&mut self, method: &str) -> PyResult<()> {
         *self.0.method_mut() = method
             .parse::<Method>()
-            .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
+            .map_err(QiniuInvalidMethodError::from_err)?;
         Ok(())
     }
 
@@ -620,16 +617,14 @@ impl AsyncHttpRequest {
     /// 设置 HTTP 请求 URL
     #[setter]
     fn set_url(&mut self, url: &str) -> PyResult<()> {
-        *self.lock()?.url_mut() = url
-            .parse::<Uri>()
-            .map_err(|err| QiniuInvalidURLError::new_err(err.to_string()))?;
+        *self.lock()?.url_mut() = url.parse::<Uri>().map_err(QiniuInvalidURLError::from_err)?;
         Ok(())
     }
 
     /// 获取请求 HTTP 版本
     #[getter]
     fn get_version(&mut self) -> PyResult<Version> {
-        self.lock()?.version().try_into()
+        Ok(self.lock()?.version().into())
     }
 
     /// 设置请求 HTTP 版本
@@ -650,7 +645,7 @@ impl AsyncHttpRequest {
     fn set_method(&mut self, method: &str) -> PyResult<()> {
         *self.lock()?.method_mut() = method
             .parse::<Method>()
-            .map_err(|err| QiniuInvalidMethodError::new_err(err.to_string()))?;
+            .map_err(QiniuInvalidMethodError::from_err)?;
         Ok(())
     }
 
@@ -760,20 +755,15 @@ pub(super) enum Version {
     HTTP_3 = 30,
 }
 
-impl TryFrom<qiniu_sdk::http::Version> for Version {
-    type Error = PyErr;
-
-    fn try_from(version: qiniu_sdk::http::Version) -> Result<Self, Self::Error> {
+impl From<qiniu_sdk::http::Version> for Version {
+    fn from(version: qiniu_sdk::http::Version) -> Self {
         match version {
-            qiniu_sdk::http::Version::HTTP_09 => Ok(Version::HTTP_09),
-            qiniu_sdk::http::Version::HTTP_10 => Ok(Version::HTTP_10),
-            qiniu_sdk::http::Version::HTTP_11 => Ok(Version::HTTP_11),
-            qiniu_sdk::http::Version::HTTP_2 => Ok(Version::HTTP_2),
-            qiniu_sdk::http::Version::HTTP_3 => Ok(Version::HTTP_3),
-            version => Err(QiniuInvalidHttpVersionError::new_err(format!(
-                "Unknown HTTP version: {:?}",
-                version
-            ))),
+            qiniu_sdk::http::Version::HTTP_09 => Version::HTTP_09,
+            qiniu_sdk::http::Version::HTTP_10 => Version::HTTP_10,
+            qiniu_sdk::http::Version::HTTP_11 => Version::HTTP_11,
+            qiniu_sdk::http::Version::HTTP_2 => Version::HTTP_2,
+            qiniu_sdk::http::Version::HTTP_3 => Version::HTTP_3,
+            version => unreachable!("Unknown HTTP version: {:?}", version),
         }
     }
 }
@@ -964,11 +954,8 @@ impl ResponseParts {
 
     /// 获取 HTTP 版本
     #[getter]
-    fn get_version(&self) -> PyResult<Version> {
-        self.0
-            .version()
-            .try_into()
-            .map_err(|err: PyErr| QiniuInvalidHttpVersionError::new_err(err.to_string()))
+    fn get_version(&self) -> Version {
+        self.0.version().into()
     }
 
     /// 设置 HTTP 版本
@@ -989,7 +976,7 @@ impl ResponseParts {
         *self.0.server_ip_mut() = server_ip
             .parse::<IpAddr>()
             .map(Some)
-            .map_err(|err| QiniuInvalidIpAddrError::new_err(err.to_string()))?;
+            .map_err(QiniuInvalidIpAddrError::from_err)?;
         Ok(())
     }
 
@@ -1318,7 +1305,7 @@ fn on_receive_response_header(callback: PyObject) -> qiniu_sdk::http::OnHeaderCa
                     header_name.as_str(),
                     header_value
                         .to_str()
-                        .map_err(|err| QiniuInvalidHeaderValueError::new_err(err.to_string()))?,
+                        .map_err(QiniuHeaderValueEncodingError::from_err)?,
                 ],
             );
             callback.call1(py, args)

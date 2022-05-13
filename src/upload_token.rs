@@ -2,7 +2,7 @@ use super::{
     credential::CredentialProvider,
     exceptions::{
         QiniuBase64Error, QiniuCallbackError, QiniuIoError, QiniuJsonError, QiniuTimeError,
-        QiniuUnknownError, QiniuUnsupportedTypeError, QiniuUploadTokenFormatError,
+        QiniuUnsupportedTypeError, QiniuUploadTokenFormatError,
     },
 };
 use pyo3::{
@@ -110,7 +110,7 @@ impl UploadPolicy {
     #[pyo3(text_signature = "(json)")]
     fn from_json(json: &str) -> PyResult<Self> {
         let policy = qiniu_sdk::upload_token::UploadPolicy::from_json(json)
-            .map_err(|err| QiniuJsonError::new_err(err.to_string()))?;
+            .map_err(QiniuJsonError::from_err)?;
         Ok(UploadPolicy(policy))
     }
 
@@ -155,7 +155,7 @@ impl UploadPolicy {
                     .map(|duration| duration.as_secs())
             })
             .map_or(Ok(None), |v| v.map(Some))
-            .map_err(|err| QiniuTimeError::new_err(err.to_string()))
+            .map_err(QiniuTimeError::from_err)
     }
 
     /// Web 端文件上传成功后，浏览器执行 303 跳转的 URL
@@ -761,26 +761,24 @@ impl qiniu_sdk::upload_token::UploadTokenProvider for UploadTokenProvider {
 
 fn convert_parse_error_to_py_err(err: ParseError) -> PyErr {
     match err {
-        ParseError::CredentialGetError(err) => QiniuIoError::new_err(err),
-        ParseError::InvalidUploadTokenFormat => {
-            QiniuUploadTokenFormatError::new_err(err.to_string())
-        }
-        ParseError::Base64DecodeError(err) => QiniuBase64Error::new_err(err.to_string()),
-        ParseError::JsonDecodeError(err) => QiniuJsonError::new_err(err.to_string()),
-        ParseError::CallbackError(err) => QiniuCallbackError::new_err(err.to_string()),
-        err => QiniuUnknownError::new_err(err.to_string()),
+        ParseError::CredentialGetError(err) => QiniuIoError::from_err(err),
+        ParseError::InvalidUploadTokenFormat => QiniuUploadTokenFormatError::from_err(err),
+        ParseError::Base64DecodeError(err) => QiniuBase64Error::from_err(err),
+        ParseError::JsonDecodeError(err) => QiniuJsonError::from_err(err),
+        ParseError::CallbackError(err) => QiniuCallbackError::from_err(err),
+        err => unreachable!("Unrecognized error {:?}", err),
     }
 }
 
 fn convert_to_string_error_to_py_err(err: ToStringError) -> PyErr {
     match err {
-        ToStringError::CredentialGetError(err) => QiniuIoError::new_err(err),
-        ToStringError::CallbackError(err) => QiniuCallbackError::new_err(err.to_string()),
-        err => QiniuUnknownError::new_err(err.to_string()),
+        ToStringError::CredentialGetError(err) => QiniuIoError::from_err(err),
+        ToStringError::CallbackError(err) => QiniuCallbackError::from_err(err),
+        err => unreachable!("Unrecognized error {:?}", err),
     }
 }
 
-/// 静态上传凭证提供者
+//r 静态上传凭证提供者
 ///
 /// 根据已经被生成好的上传凭证字符串生成上传凭证获取接口的实例，可以将上传凭证解析为 Access Token 和上传策略
 #[pyclass(extends = UploadTokenProvider)]

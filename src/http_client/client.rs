@@ -62,7 +62,7 @@ impl Authorization {
     fn sign(&self, request: &mut SyncHttpRequest) -> PyResult<()> {
         self.0
             .sign(request)
-            .map_err(|err| QiniuAuthorizationError::new_err(err.to_string()))
+            .map_err(QiniuAuthorizationError::from_err)
     }
 
     #[pyo3(text_signature = "($self, request)")]
@@ -76,7 +76,7 @@ impl Authorization {
         pyo3_asyncio::async_std::future_into_py(py, async move {
             auth.async_sign(&mut *request.lock()?)
                 .await
-                .map_err(|err| QiniuAuthorizationError::new_err(err.to_string()))
+                .map_err(QiniuAuthorizationError::from_err)
         })
     }
 
@@ -165,7 +165,7 @@ impl Resolver {
         }
         let ips = py
             .allow_threads(|| self.0.resolve(domain, builder.build()))
-            .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+            .map_err(QiniuApiCallError::from_err)?
             .into_ip_addrs()
             .into_iter()
             .map(|ip| ip.to_string())
@@ -191,7 +191,7 @@ impl Resolver {
             }
             let ips = resolver
                 .resolve(&domain, builder.build())
-                .map_err(|err| QiniuApiCallError::new_err(err.to_string()))?
+                .map_err(QiniuApiCallError::from_err)?
                 .into_ip_addrs()
                 .into_iter()
                 .map(|ip| ip.to_string())
@@ -421,8 +421,30 @@ impl TrustDnsResolver {
                 async_std::task::block_on(async {
                     qiniu_sdk::http_client::TrustDnsResolver::from_system_conf().await
                 })
-                .map_err(|err| QiniuTrustDNSError::new_err(err.to_string()))?,
+                .map_err(QiniuTrustDNSError::from_err)?,
             )),
         ))
     }
 }
+
+/// 选择器反馈
+///
+/// 用以修正选择器的选择逻辑，优化选择结果
+#[pyclass]
+#[derive(Clone)]
+struct ChooserFeedback {
+    ips: Vec<qiniu_sdk::http_client::IpAddrWithPort>,
+    domain: Option<qiniu_sdk::http_client::DomainWithPort>,
+    retried: RetriedStatsInfo,
+    metrics: Metrics,
+}
+
+/// 选择 IP 地址接口
+///
+/// 还提供了对选择结果的反馈接口，用以修正自身选择逻辑，优化选择结果
+#[pyclass(subclass)]
+#[derive(Clone)]
+struct Chooser(Box<dyn qiniu_sdk::http_client::Chooser>);
+
+#[pymethods]
+impl Chooser {}
