@@ -28,6 +28,8 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<SubnetChooser>()?;
     m.add_class::<ShuffledChooser>()?;
     m.add_class::<NeverEmptyHandedChooser>()?;
+    m.add_class::<Idempotent>()?;
+    m.add_class::<RetryDecision>()?;
 
     Ok(())
 }
@@ -775,3 +777,111 @@ impl NeverEmptyHandedChooser {
         ))
     }
 }
+
+#[pyclass]
+#[derive(Debug, Copy, Clone)]
+enum Idempotent {
+    /// 根据 HTTP 方法自动判定
+    ///
+    /// 参考 <https://datatracker.ietf.org/doc/html/rfc7231#section-4.2.2>
+    Default = 0,
+    /// 总是幂等
+    Always = 1,
+    /// 不幂等
+    Never = 2,
+}
+
+impl From<Idempotent> for qiniu_sdk::http_client::Idempotent {
+    fn from(idempotent: Idempotent) -> Self {
+        match idempotent {
+            Idempotent::Default => qiniu_sdk::http_client::Idempotent::Default,
+            Idempotent::Always => qiniu_sdk::http_client::Idempotent::Always,
+            Idempotent::Never => qiniu_sdk::http_client::Idempotent::Never,
+        }
+    }
+}
+
+impl From<qiniu_sdk::http_client::Idempotent> for Idempotent {
+    fn from(idempotent: qiniu_sdk::http_client::Idempotent) -> Self {
+        match idempotent {
+            qiniu_sdk::http_client::Idempotent::Default => Idempotent::Default,
+            qiniu_sdk::http_client::Idempotent::Always => Idempotent::Always,
+            qiniu_sdk::http_client::Idempotent::Never => Idempotent::Never,
+            _ => {
+                unreachable!("Unrecognized idempotent {:?}", idempotent)
+            }
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Debug, Copy, Clone)]
+enum RetryDecision {
+    /// 不再重试
+    DontRetry = 0,
+
+    /// 切换到下一个服务器
+    TryNextServer = 1,
+
+    /// 切换到备选终端地址
+    TryAlternativeEndpoints = 2,
+
+    /// 重试当前请求
+    RetryRequest = 3,
+
+    /// 节流
+    Throttled = 4,
+}
+
+impl From<RetryDecision> for qiniu_sdk::http_client::RetryDecision {
+    fn from(decision: RetryDecision) -> Self {
+        match decision {
+            RetryDecision::DontRetry => qiniu_sdk::http_client::RetryDecision::DontRetry,
+            RetryDecision::TryNextServer => qiniu_sdk::http_client::RetryDecision::TryNextServer,
+            RetryDecision::TryAlternativeEndpoints => {
+                qiniu_sdk::http_client::RetryDecision::TryAlternativeEndpoints
+            }
+            RetryDecision::RetryRequest => qiniu_sdk::http_client::RetryDecision::RetryRequest,
+            RetryDecision::Throttled => qiniu_sdk::http_client::RetryDecision::Throttled,
+        }
+    }
+}
+
+impl From<qiniu_sdk::http_client::RetryDecision> for RetryDecision {
+    fn from(decision: qiniu_sdk::http_client::RetryDecision) -> Self {
+        match decision {
+            qiniu_sdk::http_client::RetryDecision::DontRetry => RetryDecision::DontRetry,
+            qiniu_sdk::http_client::RetryDecision::TryNextServer => RetryDecision::TryNextServer,
+            qiniu_sdk::http_client::RetryDecision::TryAlternativeEndpoints => {
+                RetryDecision::TryAlternativeEndpoints
+            }
+            qiniu_sdk::http_client::RetryDecision::RetryRequest => RetryDecision::RetryRequest,
+            qiniu_sdk::http_client::RetryDecision::Throttled => RetryDecision::Throttled,
+            _ => {
+                unreachable!("Unrecognized decision {:?}", decision)
+            }
+        }
+    }
+}
+
+// /// 请求重试器
+// ///
+// /// 根据 HTTP 客户端返回的错误，决定是否重试请求，重试决定由 [`RetryDecision`] 定义。
+// #[pyclass(subclass)]
+// #[derive(Clone, Debug)]
+// struct RequestRetrier(Box<dyn qiniu_sdk::http_client::RequestRetrier>);
+
+// #[pymethods]
+// impl RequestRetrier {
+//     /// 作出重试决定
+//     #[pyo3(text_signature = "(request, response_error, /, idempotent = None, retried = None)")]
+//     #[args(domain_with_port = "None")]
+//     fn retry(
+//         &self,
+//         ips: Vec<&str>,
+//         domain_with_port: Option<&str>,
+//         py: Python<'_>,
+//     ) -> PyResult<RetryDecision> {
+//         todo!()
+//     }
+// }
