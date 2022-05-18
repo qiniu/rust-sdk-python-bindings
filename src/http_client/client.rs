@@ -8,6 +8,7 @@ use crate::{
     upload_token::UploadTokenProvider,
     utils::{extract_ip_addrs_with_port, parse_domain_with_port, parse_ip_addr_with_port},
 };
+use num_integer::Integer;
 use pyo3::prelude::*;
 use qiniu_sdk::prelude::AuthorizationProvider;
 use std::{path::PathBuf, time::Duration};
@@ -34,6 +35,11 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<NeverRetrier>()?;
     m.add_class::<ErrorRetrier>()?;
     m.add_class::<LimitedRetrier>()?;
+    m.add_class::<Backoff>()?;
+    m.add_class::<FixedBackoff>()?;
+    m.add_class::<RandomizedBackoff>()?;
+    m.add_class::<ExponentialBackoff>()?;
+    m.add_class::<LimitedBackoff>()?;
 
     Ok(())
 }
@@ -803,13 +809,7 @@ struct NeverEmptyHandedChooser;
 impl NeverEmptyHandedChooser {
     #[new]
     fn new(chooser: Chooser, random_choose_fraction: &PyAny) -> PyResult<(Self, Chooser)> {
-        let numerator = random_choose_fraction
-            .getattr("numerator")?
-            .extract::<usize>()?;
-        let denominator = random_choose_fraction
-            .getattr("denominator")?
-            .extract::<usize>()?;
-        let random_choose_ratio = qiniu_sdk::http_client::Ratio::new(numerator, denominator);
+        let random_choose_ratio = convert_fraction(random_choose_fraction)?;
         Ok((
             Self,
             Chooser(Box::new(
@@ -1040,6 +1040,205 @@ impl LimitedRetrier {
     }
 }
 
+/// 退避时长获取接口
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct Backoff(Box<dyn qiniu_sdk::http_client::Backoff>);
+
+#[pymethods]
+impl Backoff {
+    /// 获取退避时长
+    #[pyo3(text_signature = "(request, error, /, decision = None, retried = None)")]
+    #[args(idempotent = "None", retried = "None")]
+    fn time_ns(
+        &self,
+        request: &mut HttpRequestParts,
+        error: &QiniuApiCallError,
+        decision: Option<RetryDecision>,
+        retried: Option<RetriedStatsInfo>,
+    ) -> PyResult<u128> {
+        let error = convert_api_call_error(&PyErr::from(error))?;
+        let retried = retried.map(|r| r.0).unwrap_or_default();
+        let mut builder = qiniu_sdk::http_client::BackoffOptions::builder(error.as_ref(), &retried);
+        if let Some(decision) = decision {
+            builder.retry_decision(decision.into());
+        }
+        let opts = builder.build();
+        Ok(self.0.time(&mut *request, opts).duration().as_nanos())
+    }
+}
+
+impl qiniu_sdk::http_client::Backoff for Backoff {
+    fn time(
+        &self,
+        request: &mut qiniu_sdk::http::RequestParts,
+        opts: qiniu_sdk::http_client::BackoffOptions,
+    ) -> qiniu_sdk::http_client::GotBackoffDuration {
+        self.0.time(request, opts)
+    }
+}
+
+/// 固定时长的退避时长提供者
+#[pyclass(extends = Backoff)]
+#[pyo3(text_signature = "(delay)")]
+#[derive(Copy, Clone)]
+struct FixedBackoff {
+    delay_ns: u64,
+}
+
+#[pymethods]
+impl FixedBackoff {
+    #[new]
+    fn new(delay_ns: u64) -> (Self, Backoff) {
+        (
+            Self { delay_ns },
+            Backoff(Box::new(qiniu_sdk::http_client::FixedBackoff::new(
+                Duration::from_nanos(delay_ns),
+            ))),
+        )
+    }
+
+    /// 获取固定时长
+    #[getter]
+    fn get_delay(&self) -> u64 {
+        self.delay_ns
+    }
+}
+
+/// 指数级增长的退避时长提供者
+#[pyclass(extends = Backoff)]
+#[pyo3(text_signature = "(base_number, base_delay)")]
+#[derive(Copy, Clone)]
+struct ExponentialBackoff {
+    base_number: u32,
+    base_delay_ns: u64,
+}
+
+#[pymethods]
+impl ExponentialBackoff {
+    #[new]
+    fn new(base_number: u32, base_delay_ns: u64) -> (Self, Backoff) {
+        (
+            Self {
+                base_number,
+                base_delay_ns,
+            },
+            Backoff(Box::new(qiniu_sdk::http_client::ExponentialBackoff::new(
+                base_number,
+                Duration::from_nanos(base_delay_ns),
+            ))),
+        )
+    }
+
+    /// 获取底数
+    #[getter]
+    fn get_base_number(&self) -> u32 {
+        self.base_number
+    }
+
+    /// 获取底数
+    #[getter]
+    fn get_base_delay(&self) -> u64 {
+        self.base_delay_ns
+    }
+}
+
+/// 均匀分布随机化退避时长提供者
+///
+/// 基于一个退避时长提供者并为其增加随机化范围
+#[pyclass(extends = Backoff)]
+#[pyo3(text_signature = "(base_backoff, minification, magnification)")]
+#[derive(Clone)]
+struct RandomizedBackoff {
+    minification: PyObject,
+    magnification: PyObject,
+}
+
+#[pymethods]
+impl RandomizedBackoff {
+    #[new]
+    fn new(
+        base_backoff: Backoff,
+        minification: PyObject,
+        magnification: PyObject,
+        py: Python<'_>,
+    ) -> PyResult<(Self, Backoff)> {
+        let minification_ratio = convert_fraction(minification.as_ref(py))?;
+        let magnification_ratio = convert_fraction(magnification.as_ref(py))?;
+        Ok((
+            Self {
+                minification,
+                magnification,
+            },
+            Backoff(Box::new(qiniu_sdk::http_client::RandomizedBackoff::new(
+                base_backoff,
+                minification_ratio,
+                magnification_ratio,
+            ))),
+        ))
+    }
+
+    /// 获取最小随机比率
+    #[getter]
+    fn get_minification<'p>(&'p self, py: Python<'p>) -> &'p PyAny {
+        self.minification.as_ref(py)
+    }
+
+    /// 获取最大随机比率
+    #[getter]
+    fn get_magnification<'p>(&'p self, py: Python<'p>) -> &'p PyAny {
+        self.magnification.as_ref(py)
+    }
+}
+
+/// 固定时长的退避时长提供者
+#[pyclass(extends = Backoff)]
+#[pyo3(text_signature = "(back_backoff, min_backoff_ns, max_backoff_ns)")]
+#[derive(Copy, Clone)]
+struct LimitedBackoff {
+    max_backoff_ns: u64,
+    min_backoff_ns: u64,
+}
+
+#[pymethods]
+impl LimitedBackoff {
+    #[new]
+    fn new(base_backoff: Backoff, min_backoff_ns: u64, max_backoff_ns: u64) -> (Self, Backoff) {
+        (
+            Self {
+                max_backoff_ns,
+                min_backoff_ns,
+            },
+            Backoff(Box::new(qiniu_sdk::http_client::LimitedBackoff::new(
+                base_backoff,
+                Duration::from_nanos(min_backoff_ns),
+                Duration::from_nanos(max_backoff_ns),
+            ))),
+        )
+    }
+
+    /// 获取最短的退避时长
+    #[getter]
+    fn get_min_backoff(&self) -> u64 {
+        self.min_backoff_ns
+    }
+
+    /// 获取最长的退避时长
+    #[getter]
+    fn get_max_backoff(&self) -> u64 {
+        self.max_backoff_ns
+    }
+}
+
 fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
     Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
+}
+
+fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(
+    fraction: &'a PyAny,
+) -> PyResult<qiniu_sdk::http_client::Ratio<U>> {
+    let numerator = fraction.getattr("numerator")?.extract::<'a, U>()?;
+    let denominator = fraction.getattr("denominator")?.extract::<'a, U>()?;
+    let ratio = qiniu_sdk::http_client::Ratio::new(numerator, denominator);
+    Ok(ratio)
 }

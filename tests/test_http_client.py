@@ -819,13 +819,66 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
             retried_stats.increase_current_endpoint()
             retried_stats.increase_current_endpoint()
 
+            request = http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query')
+
             retrier = http_client.LimitedRetrier.limit_total(http_client.ErrorRetrier(), 1)
-            decision = retrier.retry(http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query'), e, retried=retried_stats)
+            decision = retrier.retry(request, e, retried=retried_stats)
             self.assertEqual(decision, http_client.RetryDecision.DontRetry)
 
             retrier = http_client.LimitedRetrier.limit_current_endpoint(http_client.ErrorRetrier(), 1)
-            decision = retrier.retry(http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query'), e, retried=retried_stats)
+            decision = retrier.retry(request, e, retried=retried_stats)
             self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
+
+        finally:
+            await runner.cleanup()
+
+class TestBackoff(unittest.IsolatedAsyncioTestCase):
+    async def test_backoff(self):
+        async def handler(request):
+            return web.json_response({"error": "concurrency limit exceeded"}, status=573, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/v4/query', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+
+        try:
+            provider = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            query = provider.query('ak', 'bucket')
+            await query.async_get()
+        except Exception as e:
+            retried_stats = http_client.RetriedStatsInfo()
+            retried_stats.increase_current_endpoint()
+            retried_stats.increase_current_endpoint()
+
+            request = http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query')
+
+            backoff = http_client.FixedBackoff(1000000)
+            self.assertEqual(backoff.delay, 1000000)
+            self.assertEqual(backoff.time_ns(request, e, retried=retried_stats), 1000000)
+
+            backoff = http_client.ExponentialBackoff(2, 1000000)
+            self.assertEqual(backoff.base_number, 2)
+            self.assertEqual(backoff.base_delay, 1000000)
+            self.assertEqual(backoff.time_ns(request, e, retried=retried_stats), 4000000)
+
+            backoff = http_client.RandomizedBackoff(http_client.FixedBackoff(1000000), fractions.Fraction(1, 2), fractions.Fraction(3, 2))
+            self.assertEqual(backoff.minification, fractions.Fraction(1, 2))
+            self.assertEqual(backoff.magnification, fractions.Fraction(3, 2))
+            time_ns = backoff.time_ns(request, e, retried=retried_stats)
+            self.assertTrue(time_ns <= 1500000)
+            self.assertTrue(time_ns >= 500000)
+
+            backoff = http_client.LimitedBackoff(backoff, 900000, 1100000)
+            self.assertEqual(backoff.min_backoff, 900000)
+            self.assertEqual(backoff.max_backoff, 1100000)
+            time_ns = backoff.time_ns(request, e, retried=retried_stats)
+            self.assertTrue(time_ns <= 1100000)
+            self.assertTrue(time_ns >= 900000)
 
         finally:
             await runner.cleanup()
