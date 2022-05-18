@@ -783,3 +783,49 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
             await chooser.async_feedback(['127.0.0.1', '127.0.0.2', '127.0.1.1'], error=e)
             chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
             self.assertEqual(len(chosen), 2)
+
+class TestRetrier(unittest.IsolatedAsyncioTestCase):
+    async def test_error_retrier(self):
+        retrier = http_client.ErrorRetrier()
+        try:
+            provider = http_client.BucketDomainsQueryer.in_memory(
+                uc_endpoints=http_client.Endpoints(['127.0.0.1', '127.0.0.2', '127.0.1.1']))
+            query = provider.query(credential.Credential(
+                'fakeak', 'fakesk'), 'fakebucket')
+            await query.async_get()
+            self.fail('should not be here')
+        except Exception as e:
+            decision = retrier.retry(http.HttpRequestParts(url='http://www.qiniu.com'), e)
+            self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
+    async def test_limited_retrier(self):
+        async def handler(request):
+            return web.json_response({"error": "concurrency limit exceeded"}, status=573, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/v4/query', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+
+        try:
+            provider = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            query = provider.query('ak', 'bucket')
+            await query.async_get()
+        except Exception as e:
+            retried_stats = http_client.RetriedStatsInfo()
+            retried_stats.increase_current_endpoint()
+            retried_stats.increase_current_endpoint()
+
+            retrier = http_client.LimitedRetrier.limit_total(http_client.ErrorRetrier(), 1)
+            decision = retrier.retry(http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query'), e, retried=retried_stats)
+            self.assertEqual(decision, http_client.RetryDecision.DontRetry)
+
+            retrier = http_client.LimitedRetrier.limit_current_endpoint(http_client.ErrorRetrier(), 1)
+            decision = retrier.retry(http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query'), e, retried=retried_stats)
+            self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
+
+        finally:
+            await runner.cleanup()

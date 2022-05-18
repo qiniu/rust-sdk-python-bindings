@@ -4,7 +4,7 @@ use crate::{
         QiniuApiCallError, QiniuApiCallErrorInfo, QiniuAuthorizationError,
         QiniuEmptyChainedResolver, QiniuTrustDNSError,
     },
-    http::{AsyncHttpRequest, Metrics, SyncHttpRequest},
+    http::{AsyncHttpRequest, HttpRequestParts, Metrics, SyncHttpRequest},
     upload_token::UploadTokenProvider,
     utils::{extract_ip_addrs_with_port, parse_domain_with_port, parse_ip_addr_with_port},
 };
@@ -30,6 +30,10 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<NeverEmptyHandedChooser>()?;
     m.add_class::<Idempotent>()?;
     m.add_class::<RetryDecision>()?;
+    m.add_class::<RequestRetrier>()?;
+    m.add_class::<NeverRetrier>()?;
+    m.add_class::<ErrorRetrier>()?;
+    m.add_class::<LimitedRetrier>()?;
 
     Ok(())
 }
@@ -103,11 +107,50 @@ impl Authorization {
 
 /// 重试统计信息
 #[pyclass]
+#[pyo3(text_signature = "()")]
 #[derive(Clone)]
 struct RetriedStatsInfo(qiniu_sdk::http_client::RetriedStatsInfo);
 
 #[pymethods]
 impl RetriedStatsInfo {
+    #[new]
+    fn new() -> Self {
+        RetriedStatsInfo(Default::default())
+    }
+
+    /// 提升当前终端地址的重试次数
+    fn increase_current_endpoint(&mut self) {
+        self.0.increase_current_endpoint();
+    }
+
+    /// 提升放弃的终端地址的数量
+
+    fn increase_abandoned_endpoints(&mut self) {
+        self.0.increase_abandoned_endpoints();
+    }
+
+    /// 提升放弃的终端的 IP 地址的数量
+
+    fn increase_abandoned_ips_of_current_endpoint(&mut self) {
+        self.0.increase_abandoned_ips_of_current_endpoint()
+    }
+
+    /// 切换到备选终端地址
+
+    fn switch_to_alternative_endpoints(&mut self) {
+        self.0.switch_to_alternative_endpoints();
+    }
+
+    /// 切换终端地址
+    fn switch_endpoint(&mut self) {
+        self.0.switch_endpoint();
+    }
+
+    /// 切换当前 IP 地址
+    fn switch_ips(&mut self) {
+        self.0.switch_ips();
+    }
+
     /// 获取总共重试的次数
     #[getter]
     fn get_retried_total(&self) -> usize {
@@ -535,7 +578,7 @@ impl Chooser {
         let error = error.map(PyErr::from);
         let error = error
             .as_ref()
-            .map(Self::convert_api_call_error)
+            .map(convert_api_call_error)
             .map_or(Ok(None), |v| v.map(Some))?;
         let feedback = Self::make_feedback(
             &ips,
@@ -571,7 +614,7 @@ impl Chooser {
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let error = error
                 .as_ref()
-                .map(Self::convert_api_call_error)
+                .map(convert_api_call_error)
                 .map_or(Ok(None), |v| v.map(Some))?;
             chooser
                 .async_feedback(Self::make_feedback(
@@ -638,10 +681,6 @@ impl Chooser {
             builder.error(error.as_ref());
         }
         Ok(builder.build())
-    }
-
-    fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
-        Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
     }
 }
 
@@ -780,6 +819,7 @@ impl NeverEmptyHandedChooser {
     }
 }
 
+/// API 幂等性
 #[pyclass]
 #[derive(Debug, Copy, Clone)]
 enum Idempotent {
@@ -816,6 +856,7 @@ impl From<qiniu_sdk::http_client::Idempotent> for Idempotent {
     }
 }
 
+/// 重试决定
 #[pyclass]
 #[derive(Debug, Copy, Clone)]
 enum RetryDecision {
@@ -866,24 +907,139 @@ impl From<qiniu_sdk::http_client::RetryDecision> for RetryDecision {
     }
 }
 
-// /// 请求重试器
-// ///
-// /// 根据 HTTP 客户端返回的错误，决定是否重试请求，重试决定由 [`RetryDecision`] 定义。
-// #[pyclass(subclass)]
-// #[derive(Clone, Debug)]
-// struct RequestRetrier(Box<dyn qiniu_sdk::http_client::RequestRetrier>);
+/// 请求重试器
+///
+/// 根据 HTTP 客户端返回的错误，决定是否重试请求，重试决定由 [`RetryDecision`] 定义。
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct RequestRetrier(Box<dyn qiniu_sdk::http_client::RequestRetrier>);
 
-// #[pymethods]
-// impl RequestRetrier {
-//     /// 作出重试决定
-//     #[pyo3(text_signature = "(request, response_error, /, idempotent = None, retried = None)")]
-//     #[args(domain_with_port = "None")]
-//     fn retry(
-//         &self,
-//         ips: Vec<&str>,
-//         domain_with_port: Option<&str>,
-//         py: Python<'_>,
-//     ) -> PyResult<RetryDecision> {
-//         todo!()
-//     }
-// }
+#[pymethods]
+impl RequestRetrier {
+    /// 作出重试决定
+    #[pyo3(text_signature = "(request, error, /, idempotent = None, retried = None)")]
+    #[args(idempotent = "None", retried = "None")]
+    fn retry(
+        &self,
+        request: &mut HttpRequestParts,
+        error: &QiniuApiCallError,
+        idempotent: Option<Idempotent>,
+        retried: Option<RetriedStatsInfo>,
+    ) -> PyResult<RetryDecision> {
+        let error = convert_api_call_error(&PyErr::from(error))?;
+        let retried = retried.map(|r| r.0).unwrap_or_default();
+        let mut builder =
+            qiniu_sdk::http_client::RequestRetrierOptions::builder(error.as_ref(), &retried);
+        if let Some(idempotent) = idempotent {
+            builder.idempotent(idempotent.into());
+        }
+        let opts = builder.build();
+        Ok(self.0.retry(&mut *request, opts).decision().into())
+    }
+}
+
+impl qiniu_sdk::http_client::RequestRetrier for RequestRetrier {
+    fn retry(
+        &self,
+        request: &mut qiniu_sdk::http::RequestParts,
+        opts: qiniu_sdk::http_client::RequestRetrierOptions<'_>,
+    ) -> qiniu_sdk::http_client::RetryResult {
+        self.0.retry(request, opts)
+    }
+}
+
+/// 永不重试器
+///
+/// 总是返回不再重试的重试器
+#[pyclass(extends = RequestRetrier)]
+#[pyo3(text_signature = "()")]
+#[derive(Copy, Clone)]
+struct NeverRetrier;
+
+#[pymethods]
+impl NeverRetrier {
+    #[new]
+    fn new() -> (Self, RequestRetrier) {
+        (
+            Self,
+            RequestRetrier(Box::new(qiniu_sdk::http_client::NeverRetrier)),
+        )
+    }
+}
+
+/// 根据七牛 API 返回的状态码作出重试决定
+#[pyclass(extends = RequestRetrier)]
+#[pyo3(text_signature = "()")]
+#[derive(Copy, Clone)]
+struct ErrorRetrier;
+
+#[pymethods]
+impl ErrorRetrier {
+    #[new]
+    fn new() -> (Self, RequestRetrier) {
+        (
+            Self,
+            RequestRetrier(Box::new(qiniu_sdk::http_client::ErrorRetrier)),
+        )
+    }
+}
+
+/// 受限重试器
+///
+/// 为一个重试器实例增加重试次数上限，即重试次数到达上限时，无论错误是什么，都切换服务器地址或不再予以重试。
+#[pyclass(extends = RequestRetrier)]
+#[pyo3(text_signature = "(retrier, retries)")]
+#[derive(Copy, Clone)]
+struct LimitedRetrier;
+
+#[pymethods]
+impl LimitedRetrier {
+    #[new]
+    fn new(retrier: RequestRetrier, retries: usize) -> (Self, RequestRetrier) {
+        (
+            Self,
+            RequestRetrier(Box::new(qiniu_sdk::http_client::LimitedRetrier::new(
+                retrier, retries,
+            ))),
+        )
+    }
+
+    /// 创建受限重试器
+    #[staticmethod]
+    #[pyo3(text_signature = "(retrier, retries)")]
+    fn limit_total(retrier: RequestRetrier, retries: usize, py: Python<'_>) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            (
+                Self,
+                RequestRetrier(Box::new(
+                    qiniu_sdk::http_client::LimitedRetrier::limit_total(retrier, retries),
+                )),
+            ),
+        )
+    }
+    /// 创建限制当前终端地址的重试次数的受限重试器
+    #[staticmethod]
+    #[pyo3(text_signature = "(retrier, retries)")]
+    fn limit_current_endpoint(
+        retrier: RequestRetrier,
+        retries: usize,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        Py::new(
+            py,
+            (
+                Self,
+                RequestRetrier(Box::new(
+                    qiniu_sdk::http_client::LimitedRetrier::limit_current_endpoint(
+                        retrier, retries,
+                    ),
+                )),
+            ),
+        )
+    }
+}
+
+fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
+    Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
+}
