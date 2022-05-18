@@ -69,25 +69,27 @@ impl Authorization {
     }
 
     #[pyo3(text_signature = "($self, request)")]
-    fn sign(&self, request: &mut SyncHttpRequest) -> PyResult<()> {
-        self.0
-            .sign(request)
-            .map_err(QiniuAuthorizationError::from_err)
+    fn sign(&self, request: PyRefMut<SyncHttpRequest>) -> PyResult<()> {
+        SyncHttpRequest::with_request_from_ref_mut(request, |request| {
+            self.0
+                .sign(request)
+                .map_err(QiniuAuthorizationError::from_err)
+        })
     }
 
     #[pyo3(text_signature = "($self, request)")]
-    fn async_sign<'p>(
-        &self,
-        request: &mut AsyncHttpRequest,
-        py: Python<'p>,
-    ) -> PyResult<&'p PyAny> {
+    fn async_sign<'p>(&self, request: Py<AsyncHttpRequest>, py: Python<'p>) -> PyResult<&'p PyAny> {
         let auth = self.0.to_owned();
-        let request = request.to_owned();
-        pyo3_asyncio::async_std::future_into_py(py, async move {
-            auth.async_sign(&mut *request.lock()?)
-                .await
-                .map_err(QiniuAuthorizationError::from_err)
-        })
+        pyo3_asyncio::async_std::future_into_py(
+            py,
+            AsyncHttpRequest::with_request_from_ref_mut(request, move |request| {
+                Box::pin(async move {
+                    auth.async_sign(request)
+                        .await
+                        .map_err(QiniuAuthorizationError::from_err)
+                })
+            }),
+        )
     }
 
     fn __repr__(&self) -> String {

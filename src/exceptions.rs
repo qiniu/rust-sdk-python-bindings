@@ -11,10 +11,6 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         py.get_type::<QiniuUserAgentInitializeError>(),
     )?;
     m.add(
-        "QiniuDataLockedError",
-        py.get_type::<QiniuDataLockedError>(),
-    )?;
-    m.add(
         "QiniuInvalidPortError",
         py.get_type::<QiniuInvalidPortError>(),
     )?;
@@ -113,12 +109,6 @@ create_exception!(
     QiniuUserAgentInitializeError,
     PyRuntimeError,
     "七牛用户代理初始化异常"
-);
-create_exception!(
-    qiniu_sdk_bindings,
-    QiniuDataLockedError,
-    PyRuntimeError,
-    "七牛数据锁定异常，需要等待解锁后重试"
 );
 create_exception!(
     qiniu_sdk_bindings,
