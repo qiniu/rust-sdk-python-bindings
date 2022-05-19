@@ -2,9 +2,10 @@ use crate::{
     credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuApiCallErrorInfo, QiniuAuthorizationError,
-        QiniuEmptyChainedResolver, QiniuTrustDNSError,
+        QiniuEmptyChainedResolver, QiniuInvalidPrefixLengthError, QiniuIsahcError,
+        QiniuTrustDNSError,
     },
-    http::{AsyncHttpRequest, HttpRequestParts, Metrics, SyncHttpRequest},
+    http::{AsyncHttpRequest, HttpCaller, HttpRequestParts, Metrics, SyncHttpRequest},
     upload_token::UploadTokenProvider,
     utils::{extract_ip_addrs_with_port, parse_domain_with_port, parse_ip_addr_with_port},
 };
@@ -40,6 +41,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<RandomizedBackoff>()?;
     m.add_class::<ExponentialBackoff>()?;
     m.add_class::<LimitedBackoff>()?;
+    m.add_class::<HttpClient>()?;
 
     Ok(())
 }
@@ -212,7 +214,7 @@ impl AsRef<qiniu_sdk::http_client::RetriedStatsInfo> for RetriedStatsInfo {
 ///
 /// 同时提供阻塞接口和异步接口，异步接口则需要启用 `async` 功能
 #[pyclass(subclass)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Resolver(Box<dyn qiniu_sdk::http_client::Resolver>);
 
 #[pymethods]
@@ -276,6 +278,24 @@ impl Resolver {
     }
 }
 
+impl qiniu_sdk::http_client::Resolver for Resolver {
+    fn resolve(
+        &self,
+        domain: &str,
+        opts: qiniu_sdk::http_client::ResolveOptions<'_>,
+    ) -> qiniu_sdk::http_client::ResolveResult {
+        self.0.resolve(domain, opts)
+    }
+
+    fn async_resolve<'a>(
+        &'a self,
+        domain: &'a str,
+        opts: qiniu_sdk::http_client::ResolveOptions<'a>,
+    ) -> futures::future::BoxFuture<'a, qiniu_sdk::http_client::ResolveResult> {
+        self.0.async_resolve(domain, opts)
+    }
+}
+
 /// 简单域名解析器
 ///
 /// 基于 libc 库的域名解析接口实现
@@ -312,7 +332,7 @@ impl TimeoutResolver {
         (
             Self,
             Resolver(Box::new(qiniu_sdk::http_client::TimeoutResolver::new(
-                resolver.0,
+                resolver,
                 Duration::from_millis(timeout_ms),
             ))),
         )
@@ -334,7 +354,7 @@ impl ShuffledResolver {
         (
             Self,
             Resolver(Box::new(qiniu_sdk::http_client::ShuffledResolver::new(
-                resolver.0,
+                resolver,
             ))),
         )
     }
@@ -436,9 +456,8 @@ impl CachedResolver {
         resolver: Resolver,
         cache_lifetime_secs: Option<u64>,
         shrink_interval_secs: Option<u64>,
-    ) -> qiniu_sdk::http_client::CachedResolverBuilder<Box<dyn qiniu_sdk::http_client::Resolver>>
-    {
-        let mut builder = qiniu_sdk::http_client::CachedResolverBuilder::new(resolver.0);
+    ) -> qiniu_sdk::http_client::CachedResolverBuilder<Resolver> {
+        let mut builder = qiniu_sdk::http_client::CachedResolverBuilder::new(resolver);
         if let Some(cache_lifetime) = cache_lifetime_secs {
             builder = builder.cache_lifetime(Duration::from_secs(cache_lifetime));
         }
@@ -757,7 +776,7 @@ impl SubnetChooser {
         shrink_interval_secs: Option<u64>,
         ipv4_netmask_prefix_length: Option<u8>,
         ipv6_netmask_prefix_length: Option<u8>,
-    ) -> (Self, Chooser) {
+    ) -> PyResult<(Self, Chooser)> {
         let mut builder = qiniu_sdk::http_client::SubnetChooser::builder();
         if let Some(block_duration_secs) = block_duration_secs {
             builder.block_duration(Duration::from_secs(block_duration_secs));
@@ -766,12 +785,16 @@ impl SubnetChooser {
             builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
         }
         if let Some(ipv4_netmask_prefix_length) = ipv4_netmask_prefix_length {
-            builder.ipv4_netmask_prefix_length(ipv4_netmask_prefix_length);
+            builder
+                .ipv4_netmask_prefix_length(ipv4_netmask_prefix_length)
+                .map_err(QiniuInvalidPrefixLengthError::from_err)?;
         }
         if let Some(ipv6_netmask_prefix_length) = ipv6_netmask_prefix_length {
-            builder.ipv6_netmask_prefix_length(ipv6_netmask_prefix_length);
+            builder
+                .ipv6_netmask_prefix_length(ipv6_netmask_prefix_length)
+                .map_err(QiniuInvalidPrefixLengthError::from_err)?;
         }
-        (Self, Chooser(Box::new(builder.build())))
+        Ok((Self, Chooser(Box::new(builder.build()))))
     }
 }
 
@@ -1241,4 +1264,92 @@ fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(
     let denominator = fraction.getattr("denominator")?.extract::<'a, U>()?;
     let ratio = qiniu_sdk::http_client::Ratio::new(numerator, denominator);
     Ok(ratio)
+}
+
+/// HTTP 客户端
+///
+/// 用于发送 HTTP 请求的入口。
+#[pyclass]
+#[pyo3(
+    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None)"
+)]
+#[derive(Clone)]
+struct HttpClient(qiniu_sdk::http_client::HttpClient);
+
+#[pymethods]
+impl HttpClient {
+    #[new]
+    fn new(
+        http_caller: Option<HttpCaller>,
+        use_https: Option<bool>,
+        appended_user_agent: Option<&str>,
+        request_retrier: Option<RequestRetrier>,
+        backoff: Option<Backoff>,
+        chooser: Option<Chooser>,
+        resolver: Option<Resolver>,
+    ) -> PyResult<Self> {
+        let mut builder = if let Some(http_caller) = http_caller {
+            qiniu_sdk::http_client::HttpClient::builder(http_caller)
+        } else {
+            qiniu_sdk::http_client::HttpClient::build_isahc().map_err(QiniuIsahcError::from_err)?
+        };
+
+        if let Some(use_https) = use_https {
+            builder.use_https(use_https);
+        }
+        if let Some(appended_user_agent) = appended_user_agent {
+            builder.appended_user_agent(appended_user_agent);
+        }
+        if let Some(request_retrier) = request_retrier {
+            builder.request_retrier(request_retrier);
+        }
+        if let Some(backoff) = backoff {
+            builder.backoff(backoff);
+        }
+        if let Some(chooser) = chooser {
+            builder.chooser(chooser);
+        }
+        if let Some(resolver) = resolver {
+            builder.resolver(resolver);
+        }
+
+        // TODO: ADD CALLBACKS
+
+        Ok(Self(builder.build()))
+    }
+
+    /// 获得默认的 [`HttpCaller`] 实例
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn default_http_caller() -> HttpCaller {
+        HttpCaller::new(qiniu_sdk::http_client::HttpClient::default_http_caller())
+    }
+
+    /// 获得默认的 [`Resolver`] 实例
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn default_resolver() -> Resolver {
+        Resolver(qiniu_sdk::http_client::HttpClient::default_resolver())
+    }
+
+    /// 获得默认的 [`Chooser`] 实例
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn default_chooser() -> Chooser {
+        Chooser(qiniu_sdk::http_client::HttpClient::default_chooser())
+    }
+
+    /// 获得默认的 [`RequestRetrier`] 实例
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn default_retrier() -> RequestRetrier {
+        RequestRetrier(qiniu_sdk::http_client::HttpClient::default_retrier())
+    }
+
+    /// 获得默认的 [`Backoff`] 实例
+    #[staticmethod]
+    #[pyo3(text_signature = "()")]
+    fn default_backoff() -> Backoff {
+        Backoff(qiniu_sdk::http_client::HttpClient::default_backoff())
+    }
 }

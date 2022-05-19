@@ -48,7 +48,14 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 ///
 /// 实现该接口，即可处理所有七牛 SDK 发送的 HTTP 请求
 #[pyclass(subclass)]
+#[derive(Clone, Debug)]
 pub(super) struct HttpCaller(Arc<dyn qiniu_sdk::http::HttpCaller>);
+
+impl HttpCaller {
+    pub(super) fn new(caller: impl qiniu_sdk::http::HttpCaller + 'static) -> Self {
+        Self(Arc::new(caller))
+    }
+}
 
 #[pymethods]
 impl HttpCaller {
@@ -94,12 +101,29 @@ impl HttpCaller {
     }
 }
 
+impl qiniu_sdk::http::HttpCaller for HttpCaller {
+    fn call(
+        &self,
+        request: &mut qiniu_sdk::http::SyncRequest<'_>,
+    ) -> qiniu_sdk::http::SyncResponseResult {
+        self.0.call(request)
+    }
+
+    fn async_call<'a>(
+        &'a self,
+        request: &'a mut qiniu_sdk::http::AsyncRequest<'_>,
+    ) -> BoxFuture<'a, qiniu_sdk::http::AsyncResponseResult> {
+        self.0.async_call(request)
+    }
+}
+
 /// 七牛 Isahc HTTP 客户端实现
 ///
 /// 基于 Isahc 库提供 HTTP 客户端接口实现
 #[pyclass(extends = HttpCaller)]
 #[pyo3(text_signature = "()")]
-struct IsahcHttpCaller;
+#[derive(Clone)]
+pub(super) struct IsahcHttpCaller;
 
 #[pymethods]
 impl IsahcHttpCaller {

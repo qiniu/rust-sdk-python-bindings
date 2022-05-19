@@ -56,6 +56,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     QiniuInvalidIpAddrWithPortError::register(py, m)?;
     QiniuApiCallError::register(py, m)?;
     QiniuAuthorizationError::register(py, m)?;
+    QiniuInvalidPrefixLengthError::register(py, m)?;
     Ok(())
 }
 
@@ -335,4 +336,14 @@ create_exception_with_info!(
     QiniuAuthorizationErrorInfo,
     qiniu_sdk::http_client::AuthorizationError,
     "七牛签名异常"
+);
+
+create_exception_with_info!(
+    qiniu_sdk_bindings,
+    QiniuInvalidPrefixLengthError,
+    "QiniuInvalidPrefixLengthError",
+    PyValueError,
+    QiniuInvalidPrefixLengthErrorInfo,
+    qiniu_sdk::http_client::PrefixLenError,
+    "七牛子网掩码前缀长度异常"
 );
