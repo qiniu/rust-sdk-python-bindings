@@ -48,6 +48,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     QiniuIoError::register(py, m)?;
     QiniuUploadTokenFormatError::register(py, m)?;
     QiniuBase64Error::register(py, m)?;
+    QiniuMimeParseError::register(py, m)?;
     QiniuCallbackError::register(py, m)?;
     QiniuHttpCallError::register(py, m)?;
     QiniuIsahcError::register(py, m)?;
@@ -98,6 +99,7 @@ macro_rules! create_exception_with_info {
                 Ok(())
             }
 
+            #[allow(dead_code)]
             pub(super) fn from_err(err: $inner_type) -> PyErr {
                 Self::new_err($inner_name::from(err))
             }
@@ -290,6 +292,15 @@ create_exception_with_info!(
     QiniuBase64ErrorInfo,
     qiniu_sdk::utils::base64::DecodeError,
     "七牛 Base64 解析错误"
+);
+create_exception_with_info!(
+    qiniu_sdk_bindings,
+    QiniuMimeParseError,
+    "QiniuMimeParseError",
+    PyValueError,
+    QiniuMimeParseErrorInfo,
+    qiniu_sdk::http_client::mime::FromStrError,
+    "七牛 MIME 解析错误"
 );
 create_exception_with_info!(
     qiniu_sdk_bindings,

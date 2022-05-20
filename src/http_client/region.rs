@@ -6,9 +6,10 @@ use crate::{
     },
     utils::{extract_endpoints, parse_domain_with_port},
 };
+use futures::future::BoxFuture;
 use pyo3::{prelude::*, pyclass::CompareOp};
 use qiniu_sdk::http_client::EndpointsGetOptions;
-use std::{path::PathBuf, time::Duration};
+use std::{borrow::Cow, path::PathBuf, time::Duration};
 
 pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<DomainWithPort>()?;
@@ -189,7 +190,7 @@ impl From<Endpoint> for qiniu_sdk::http_client::Endpoint {
 
 #[pyclass]
 #[derive(Clone, Copy)]
-enum ServiceName {
+pub(super) enum ServiceName {
     /// 上传服务
     Up = 0,
 
@@ -245,9 +246,9 @@ impl From<qiniu_sdk::http_client::ServiceName> for ServiceName {
 ///
 /// 同时提供阻塞获取接口和异步获取接口，异步获取接口则需要启用 `async` 功能
 #[pyclass(subclass)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions_provider)")]
-struct EndpointsProvider(Box<dyn qiniu_sdk::http_client::EndpointsProvider>);
+pub(super) struct EndpointsProvider(Box<dyn qiniu_sdk::http_client::EndpointsProvider>);
 
 #[pymethods]
 impl EndpointsProvider {
@@ -310,6 +311,23 @@ impl EndpointsProvider {
 
     fn __str__(&self) -> String {
         self.__repr__()
+    }
+}
+
+impl qiniu_sdk::http_client::EndpointsProvider for EndpointsProvider {
+    fn get_endpoints<'e>(
+        &'e self,
+        options: qiniu_sdk::http_client::EndpointsGetOptions<'_>,
+    ) -> qiniu_sdk::http_client::ApiResult<Cow<'e, qiniu_sdk::http_client::Endpoints>> {
+        self.0.get_endpoints(options)
+    }
+
+    fn async_get_endpoints<'a>(
+        &'a self,
+        options: qiniu_sdk::http_client::EndpointsGetOptions<'a>,
+    ) -> BoxFuture<'a, qiniu_sdk::http_client::ApiResult<Cow<'a, qiniu_sdk::http_client::Endpoints>>>
+    {
+        self.0.async_get_endpoints(options)
     }
 }
 
@@ -727,7 +745,7 @@ impl Region {
 /// 七牛所有区域信息查询器
 #[pyclass(extends = RegionsProvider)]
 #[pyo3(
-    text_signature = "(credential_provider, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+    text_signature = "(credential_provider, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct AllRegionsProvider;
@@ -737,7 +755,7 @@ impl AllRegionsProvider {
     #[new]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
@@ -768,11 +786,11 @@ impl AllRegionsProvider {
 
     #[staticmethod]
     #[pyo3(
-        text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
@@ -806,10 +824,10 @@ impl AllRegionsProvider {
 
     #[staticmethod]
     #[pyo3(
-        text_signature = "(credential_provider, /, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(credential_provider, /, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[args(
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
@@ -860,7 +878,7 @@ impl AllRegionsProvider {
 /// 存储空间相关区域查询构建器
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+    text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct BucketRegionsQueryer(qiniu_sdk::http_client::BucketRegionsQueryer);
@@ -870,7 +888,7 @@ impl BucketRegionsQueryer {
     #[new]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
@@ -897,13 +915,13 @@ impl BucketRegionsQueryer {
     #[staticmethod]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(path, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
@@ -927,13 +945,13 @@ impl BucketRegionsQueryer {
 
     #[staticmethod]
     #[args(
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(/, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(
@@ -986,7 +1004,7 @@ impl BucketRegionsQueryer {
 /// 查询该存储空间绑定的域名。
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+    text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
 struct BucketDomainsQueryer(qiniu_sdk::http_client::BucketDomainsQueryer);
@@ -996,7 +1014,7 @@ impl BucketDomainsQueryer {
     #[new]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
@@ -1023,13 +1041,13 @@ impl BucketDomainsQueryer {
     #[staticmethod]
     #[args(
         auto_persistent = "true",
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(path, /, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(path, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn load_or_create_from(
@@ -1053,13 +1071,13 @@ impl BucketDomainsQueryer {
 
     #[staticmethod]
     #[args(
-        use_https = "false",
+        use_https = "true",
         uc_endpoints = "None",
         cache_lifetime_secs = "None",
         shrink_interval_secs = "None"
     )]
     #[pyo3(
-        text_signature = "(/, auto_persistent = True, use_https = False, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
+        text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
     )]
     #[allow(clippy::too_many_arguments)]
     fn in_memory(

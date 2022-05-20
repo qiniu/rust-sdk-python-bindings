@@ -1,5 +1,8 @@
 from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
 from aiohttp import web
+import os
+import io
+import aiofiles
 import unittest
 import fractions
 
@@ -784,6 +787,7 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
             chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
             self.assertEqual(len(chosen), 2)
 
+
 class TestRetrier(unittest.IsolatedAsyncioTestCase):
     async def test_error_retrier(self):
         retrier = http_client.ErrorRetrier()
@@ -795,8 +799,10 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
             await query.async_get()
             self.fail('should not be here')
         except Exception as e:
-            decision = retrier.retry(http.HttpRequestParts(url='http://www.qiniu.com'), e)
+            decision = retrier.retry(
+                http.HttpRequestParts(url='http://www.qiniu.com'), e)
             self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
+
     async def test_limited_retrier(self):
         async def handler(request):
             return web.json_response({"error": "concurrency limit exceeded"}, status=573, headers={'X-ReqId': 'fakereqid'})
@@ -808,7 +814,6 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
         site = web.TCPSite(runner, '127.0.0.1', 8089)
         await site.start()
 
-
         try:
             provider = http_client.BucketRegionsQueryer.in_memory(
                 use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
@@ -819,18 +824,22 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
             retried_stats.increase_current_endpoint()
             retried_stats.increase_current_endpoint()
 
-            request = http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query')
+            request = http.HttpRequestParts(
+                url='http://127.0.0.1:8089/v4/query')
 
-            retrier = http_client.LimitedRetrier.limit_total(http_client.ErrorRetrier(), 1)
+            retrier = http_client.LimitedRetrier.limit_total(
+                http_client.ErrorRetrier(), 1)
             decision = retrier.retry(request, e, retried=retried_stats)
             self.assertEqual(decision, http_client.RetryDecision.DontRetry)
 
-            retrier = http_client.LimitedRetrier.limit_current_endpoint(http_client.ErrorRetrier(), 1)
+            retrier = http_client.LimitedRetrier.limit_current_endpoint(
+                http_client.ErrorRetrier(), 1)
             decision = retrier.retry(request, e, retried=retried_stats)
             self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
 
         finally:
             await runner.cleanup()
+
 
 class TestBackoff(unittest.IsolatedAsyncioTestCase):
     async def test_backoff(self):
@@ -844,7 +853,6 @@ class TestBackoff(unittest.IsolatedAsyncioTestCase):
         site = web.TCPSite(runner, '127.0.0.1', 8089)
         await site.start()
 
-
         try:
             provider = http_client.BucketRegionsQueryer.in_memory(
                 use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
@@ -855,18 +863,22 @@ class TestBackoff(unittest.IsolatedAsyncioTestCase):
             retried_stats.increase_current_endpoint()
             retried_stats.increase_current_endpoint()
 
-            request = http.HttpRequestParts(url='http://127.0.0.1:8089/v4/query')
+            request = http.HttpRequestParts(
+                url='http://127.0.0.1:8089/v4/query')
 
             backoff = http_client.FixedBackoff(1000000)
             self.assertEqual(backoff.delay, 1000000)
-            self.assertEqual(backoff.time_ns(request, e, retried=retried_stats), 1000000)
+            self.assertEqual(backoff.time_ns(
+                request, e, retried=retried_stats), 1000000)
 
             backoff = http_client.ExponentialBackoff(2, 1000000)
             self.assertEqual(backoff.base_number, 2)
             self.assertEqual(backoff.base_delay, 1000000)
-            self.assertEqual(backoff.time_ns(request, e, retried=retried_stats), 4000000)
+            self.assertEqual(backoff.time_ns(
+                request, e, retried=retried_stats), 4000000)
 
-            backoff = http_client.RandomizedBackoff(http_client.FixedBackoff(1000000), fractions.Fraction(1, 2), fractions.Fraction(3, 2))
+            backoff = http_client.RandomizedBackoff(http_client.FixedBackoff(
+                1000000), fractions.Fraction(1, 2), fractions.Fraction(3, 2))
             self.assertEqual(backoff.minification, fractions.Fraction(1, 2))
             self.assertEqual(backoff.magnification, fractions.Fraction(3, 2))
             time_ns = backoff.time_ns(request, e, retried=retried_stats)
@@ -880,5 +892,210 @@ class TestBackoff(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(time_ns <= 1100000)
             self.assertTrue(time_ns >= 900000)
 
+        finally:
+            await runner.cleanup()
+
+
+class TestHttpClient(unittest.IsolatedAsyncioTestCase):
+    async def test_get(self):
+        async def handler(request):
+            self.assertEqual(request.query['fakeops'], '')
+            self.assertEqual(request.query['key1'], 'val1')
+            self.assertEqual(request.query['key2'], 'val2')
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/getfile', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            client = http_client.HttpClient()
+            resp = await client.async_call(
+                'GET', http_client.Endpoints(['127.0.0.1:8089']),
+                use_https=False,
+                path='/getfile',
+                query='fakeops',
+                query_pairs=[('key1', 'val1'), ('key2', 'val2')],
+                accept_json=True,
+                authorization=http_client.Authorization.v2(credential.Credential('ak', 'sk')))
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(await resp.parse_json(), {})
+        finally:
+            await runner.cleanup()
+
+    async def test_post_bytes(self):
+        async def handler(request):
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            self.assertEqual(await request.text(), 'hello world')
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.post('/post', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            client = http_client.HttpClient()
+            resp = await client.async_call(
+                'POST', http_client.Endpoints(['127.0.0.1:8089']),
+                use_https=False,
+                path='/post',
+                accept_json=True,
+                authorization=http_client.Authorization.v2(
+                    credential.Credential('ak', 'sk')),
+                bytes=b'hello world')
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(await resp.parse_json(), {})
+        finally:
+            await runner.cleanup()
+
+    async def test_post_reader(self):
+        async def handler(request):
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            body = await request.read()
+            self.assertEqual(len(body), 1 << 20)
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application(client_max_size=1 << 30)
+        app.add_routes([web.post('/postbinary', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            async with aiofiles.tempfile.TemporaryFile('wb+') as f:
+                client = http_client.HttpClient()
+                await f.write(os.urandom(1 << 20))
+                await f.seek(0, io.SEEK_SET)
+                resp = await client.async_call(
+                    'POST', http_client.Endpoints(['127.0.0.1:8089']),
+                    use_https=False,
+                    path='/postbinary',
+                    accept_json=True,
+                    authorization=http_client.Authorization.v2(
+                        credential.Credential('ak', 'sk')),
+                    body=f,
+                    body_len=1 << 20)
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(await resp.parse_json(), {})
+        finally:
+            await runner.cleanup()
+
+    async def test_post_form(self):
+        async def handler(request):
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            form = await request.post()
+            self.assertEqual(form['key1'], 'val1')
+            self.assertEqual(form['key2'], 'val2')
+            self.assertEqual(form['key3'], '')
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application(client_max_size=1 << 30)
+        app.add_routes([web.post('/postform', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            client = http_client.HttpClient()
+            resp = await client.async_call(
+                'POST', http_client.Endpoints(['127.0.0.1:8089']),
+                use_https=False,
+                path='/postform',
+                accept_json=True,
+                authorization=http_client.Authorization.v2(
+                    credential.Credential('ak', 'sk')),
+                form=[('key1', 'val1'), ('key2', 'val2'), ('key3', None)])
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(await resp.parse_json(), {})
+        finally:
+            await runner.cleanup()
+
+    async def test_post_multiparts(self):
+        async def handler(request):
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            multipart = await request.multipart()
+            for _ in range(3):
+                part = await multipart.next()
+                if part.name == 'file':
+                    self.assertEqual(part.filename, 'test.bin')
+                    self.assertEqual(
+                        part.headers['content-type'], 'application/octet-stream')
+                    content = await part.read()
+                    self.assertEqual(len(content), 1 << 20)
+                elif part.name == 'key1':
+                    self.assertEqual(await part.text(), 'val1')
+                elif part.name == 'key2':
+                    self.assertEqual(await part.read(), b'val2')
+                else:
+                    self.fail('unexpected part name: ' + part.name)
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application(client_max_size=1 << 30)
+        app.add_routes([web.post('/postmultipart', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            async with aiofiles.tempfile.TemporaryFile('wb+') as f:
+                await f.write(os.urandom(1 << 20))
+                await f.seek(0, io.SEEK_SET)
+                client = http_client.HttpClient()
+                resp = await client.async_call(
+                    'POST', http_client.Endpoints(['127.0.0.1:8089']),
+                    use_https=False,
+                    path='/postmultipart',
+                    accept_json=True,
+                    authorization=http_client.Authorization.v2(
+                        credential.Credential('ak', 'sk')),
+                    multipart={'key1': 'val1', 'key2': b'val2', 'file': (f, {"file_name": "test.bin", "mime": "application/octet-stream"})})
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(await resp.parse_json(), {})
+        finally:
+            await runner.cleanup()
+
+    async def test_post_json(self):
+        async def handler(request):
+            self.assertTrue(
+                request.headers['Authorization'].startswith('Qiniu ak:'))
+            json = await request.json()
+            self.assertEqual(
+                json, {'num': -1.2, 'arr': ['str', {'dict': {'dict2': 'val'}}]})
+            return web.json_response({}, status=200, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application(client_max_size=1 << 30)
+        app.add_routes([web.post('/postjson', handler)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            client = http_client.HttpClient()
+            resp = await client.async_call(
+                'POST', http_client.Endpoints(['127.0.0.1:8089']),
+                use_https=False,
+                path='/postjson',
+                accept_json=True,
+                authorization=http_client.Authorization.v2(
+                    credential.Credential('ak', 'sk')),
+                json={'num': -1.2, 'arr': ['str', {'dict': {'dict2': 'val'}}]})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(await resp.parse_json(), {})
         finally:
             await runner.cleanup()

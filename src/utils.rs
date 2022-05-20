@@ -4,11 +4,27 @@ use super::{
         QiniuInvalidEndpointError, QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError,
         QiniuInvalidIpAddrError, QiniuInvalidIpAddrWithPortError, QiniuInvalidMethodError,
         QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
+        QiniuMimeParseError, QiniuUnsupportedTypeError,
     },
     http_client::Endpoint,
 };
-use futures::{io::Cursor, ready, AsyncRead, AsyncSeek, FutureExt};
-use pyo3::{prelude::*, types::PyTuple};
+use futures::{
+    channel::{
+        mpsc::{
+            unbounded, UnboundedReceiver as MpscUnboundedReceiver,
+            UnboundedSender as MpscUnboundedSender,
+        },
+        oneshot::{channel, Sender as OneShotSender},
+    },
+    future::{select, Either},
+    io::Cursor,
+    lock::Mutex as AsyncMutex,
+    pin_mut, ready, AsyncRead, AsyncSeek, FutureExt, SinkExt, StreamExt,
+};
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyTuple},
+};
 use qiniu_sdk::{
     http::{
         header::ToStrError, AsyncRequestBody, AsyncResponseBody, HeaderMap, HeaderName,
@@ -16,6 +32,7 @@ use qiniu_sdk::{
     },
     http_client::{DomainWithPort, IpAddrWithPort},
 };
+use serde_json::Map;
 use smart_default::SmartDefault;
 use std::{
     collections::HashMap,
@@ -27,6 +44,7 @@ use std::{
     net::IpAddr,
     num::NonZeroU16,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -47,6 +65,12 @@ impl PythonIoBase {
 
     pub(super) fn into_async_read(self) -> PythonIoBaseAsyncRead {
         PythonIoBaseAsyncRead::new(self)
+    }
+
+    pub(super) fn into_async_read_with_local_agent(
+        self,
+    ) -> (PythonIoBaseAsyncRead, RemotePyCallLocalAgent) {
+        PythonIoBaseAsyncRead::new_with_local_agent(self)
     }
 
     fn _read(&mut self, buf: &mut [u8]) -> PyResult<usize> {
@@ -107,10 +131,116 @@ impl Write for PythonIoBase {
     }
 }
 
+trait PythonCaller: Send + Sync + Debug {
+    fn call_python_method(
+        &self,
+        object: PyObject,
+        method: &str,
+        args: &PyTuple,
+        py: Python<'_>,
+    ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>>;
+}
+
+#[derive(Debug)]
+struct DirectPyCall;
+
+impl PythonCaller for DirectPyCall {
+    fn call_python_method(
+        &self,
+        object: PyObject,
+        method: &str,
+        args: &PyTuple,
+        py: Python<'_>,
+    ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>> {
+        pyo3_asyncio::async_std::into_future(object.call_method1(py, method, args)?.as_ref(py)).map(
+            |fut| {
+                Box::pin(fut)
+                    as Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>
+            },
+        )
+    }
+}
+
+#[derive(Debug)]
+struct RemotePyCall {
+    sender: Arc<AsyncMutex<MpscUnboundedSender<RemotePyCallArgs>>>,
+}
+
+struct RemotePyCallArgs {
+    object: PyObject,
+    method: String,
+    args: Py<PyTuple>,
+    sender: OneShotSender<PyResult<PyObject>>,
+}
+
+impl PythonCaller for RemotePyCall {
+    fn call_python_method(
+        &self,
+        object: PyObject,
+        method: &str,
+        args: &PyTuple,
+        py: Python<'_>,
+    ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>> {
+        let sender = self.sender.to_owned();
+        let method = method.to_owned();
+        let args = args.into_py(py);
+        Ok(Box::pin(async move {
+            let (s, r) = channel();
+            sender
+                .lock()
+                .await
+                .send(RemotePyCallArgs {
+                    object,
+                    method,
+                    args,
+                    sender: s,
+                })
+                .await
+                .unwrap();
+            r.await.unwrap()
+        }))
+    }
+}
+
+pub(super) struct RemotePyCallLocalAgent {
+    receiver: MpscUnboundedReceiver<RemotePyCallArgs>,
+}
+
+impl RemotePyCallLocalAgent {
+    pub(super) async fn run<T>(&mut self, should_stop: impl Future<Output = T>) -> PyResult<T> {
+        let direct_call = DirectPyCall;
+        pin_mut!(should_stop);
+        loop {
+            let next_future = self.receiver.next();
+            pin_mut!(next_future);
+            match select(should_stop, next_future).await {
+                Either::Right((Some(args), st)) => {
+                    should_stop = st;
+                    let retval = Python::with_gil(|py| {
+                        direct_call.call_python_method(
+                            args.object,
+                            args.method.as_str(),
+                            args.args.as_ref(py),
+                            py,
+                        )
+                    })?
+                    .await;
+                    args.sender.send(retval).ok();
+                }
+                Either::Right((None, _)) => {
+                    unreachable!("receiver should always return something")
+                }
+                Either::Left((retval, _)) => return Ok(retval),
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct PythonIoBaseAsyncRead {
     base: PythonIoBase,
     step: AsyncStep,
+    py_caller: Arc<dyn PythonCaller>,
 }
 
 #[derive(SmartDefault, Debug)]
@@ -142,7 +272,20 @@ impl PythonIoBaseAsyncRead {
         Self {
             base,
             step: Default::default(),
+            py_caller: Arc::new(DirectPyCall),
         }
+    }
+
+    fn new_with_local_agent(base: PythonIoBase) -> (Self, RemotePyCallLocalAgent) {
+        let (sender, receiver) = unbounded();
+        let new = Self {
+            base,
+            step: Default::default(),
+            py_caller: Arc::new(RemotePyCall {
+                sender: Arc::new(AsyncMutex::new(sender)),
+            }),
+        };
+        (new, RemotePyCallLocalAgent { receiver })
     }
 }
 
@@ -171,13 +314,15 @@ impl AsyncRead for PythonIoBaseAsyncRead {
                 match ready!(Pin::new(buffered).poll_read(cx, buf)) {
                     Ok(0) => {
                         let io_base = self.base.io_base.to_owned();
+                        let py_caller = self.py_caller.to_owned();
                         self.step =
                             AsyncStep::Reading(AsyncReadStep::Waiting(Box::pin(async move {
                                 let retval = Python::with_gil(|py| {
-                                    pyo3_asyncio::async_std::into_future(
-                                        io_base
-                                            .call_method1(py, READ, PyTuple::new(py, [1 << 20]))?
-                                            .as_ref(py),
+                                    py_caller.call_python_method(
+                                        io_base,
+                                        READ,
+                                        PyTuple::new(py, [1 << 20]),
+                                        py,
                                     )
                                 })?
                                 .await?;
@@ -208,13 +353,15 @@ impl AsyncSeek for PythonIoBaseAsyncRead {
         match &mut self.step {
             AsyncStep::Free | AsyncStep::Reading(AsyncReadStep::Done) => {
                 let io_base = self.base.io_base.to_owned();
+                let py_caller = self.py_caller.to_owned();
                 let (offset, whence) = split_seek_from(pos);
                 self.step = AsyncStep::Seeking(AsyncSeekStep::Waiting(Box::pin(async move {
                     let retval = Python::with_gil(|py| {
-                        pyo3_asyncio::async_std::into_future(
-                            io_base
-                                .call_method1(py, SEEK, PyTuple::new(py, [offset, whence]))?
-                                .as_ref(py),
+                        py_caller.call_python_method(
+                            io_base,
+                            SEEK,
+                            PyTuple::new(py, [offset, whence]),
+                            py,
                         )
                     })?
                     .await?;
@@ -276,6 +423,25 @@ pub(super) fn parse_method(method: &str) -> PyResult<Method> {
     Ok(method)
 }
 
+pub(super) fn parse_query_pairs(
+    pairs: PyObject,
+) -> PyResult<Vec<qiniu_sdk::http_client::QueryPair<'static>>> {
+    Python::with_gil(|py| {
+        if let Ok(pairs) = pairs.extract::<HashMap<String, String>>(py) {
+            Ok(pairs
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect())
+        } else {
+            Ok(pairs
+                .extract::<Vec<(String, String)>>(py)?
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect())
+        }
+    })
+}
+
 pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<HeaderMap> {
     headers
         .into_iter()
@@ -333,6 +499,95 @@ pub(super) fn parse_port(port: u16) -> PyResult<NonZeroU16> {
     }
 }
 
+pub(super) fn extract_sync_multipart(
+    parts: HashMap<String, PyObject>,
+) -> PyResult<qiniu_sdk::http_client::SyncMultipart<'static>> {
+    Python::with_gil(|py| {
+        let mut multipart = qiniu_sdk::http_client::SyncMultipart::new();
+        for (field_name, part) in parts {
+            let part = if let Ok((body, metadata)) = part.extract::<(PyObject, &PyDict)>(py) {
+                extract_sync_part(body, Some(metadata), py)?
+            } else {
+                extract_sync_part(part, None, py)?
+            };
+            multipart = multipart.add_part(field_name, part);
+        }
+        Ok(multipart)
+    })
+}
+
+fn extract_sync_part<'a>(
+    body: PyObject,
+    metadata: Option<&PyDict>,
+    py: Python<'_>,
+) -> PyResult<qiniu_sdk::http_client::SyncPart<'a>> {
+    let metadata = metadata.map(extract_multipart_metadata).transpose()?;
+    let mut part = if let Ok(text) = body.extract::<String>(py) {
+        qiniu_sdk::http_client::SyncPart::text(text)
+    } else if let Ok(bytes) = body.extract::<Vec<u8>>(py) {
+        qiniu_sdk::http_client::SyncPart::bytes(bytes)
+    } else {
+        qiniu_sdk::http_client::SyncPart::stream(PythonIoBase::new(body))
+    };
+    if let Some(metadata) = metadata {
+        part = part.metadata(metadata);
+    }
+    Ok(part)
+}
+
+pub(super) fn extract_async_multipart(
+    parts: HashMap<String, PyObject>,
+) -> PyResult<qiniu_sdk::http_client::AsyncMultipart<'static>> {
+    Python::with_gil(|py| {
+        let mut multipart = qiniu_sdk::http_client::AsyncMultipart::new();
+        for (field_name, part) in parts {
+            let part = if let Ok((body, metadata)) = part.extract::<(PyObject, &PyDict)>(py) {
+                extract_async_part(body, Some(metadata), py)?
+            } else {
+                extract_async_part(part, None, py)?
+            };
+            multipart = multipart.add_part(field_name, part);
+        }
+        Ok(multipart)
+    })
+}
+
+fn extract_async_part<'a>(
+    body: PyObject,
+    metadata: Option<&PyDict>,
+    py: Python<'_>,
+) -> PyResult<qiniu_sdk::http_client::AsyncPart<'a>> {
+    let metadata = metadata.map(extract_multipart_metadata).transpose()?;
+    let mut part = if let Ok(text) = body.extract::<String>(py) {
+        qiniu_sdk::http_client::AsyncPart::text(text)
+    } else if let Ok(bytes) = body.extract::<Vec<u8>>(py) {
+        qiniu_sdk::http_client::AsyncPart::bytes(bytes)
+    } else {
+        qiniu_sdk::http_client::AsyncPart::stream(PythonIoBase::new(body).into_async_read())
+    };
+    if let Some(metadata) = metadata {
+        part = part.metadata(metadata);
+    }
+    Ok(part)
+}
+
+fn extract_multipart_metadata(dict: &PyDict) -> PyResult<qiniu_sdk::http_client::PartMetadata> {
+    let mut metadata = qiniu_sdk::http_client::PartMetadata::default();
+    if let Some(mime) = dict.get_item("mime") {
+        let mime = parse_mime(mime.extract::<&str>()?)?;
+        metadata = metadata.mime(mime);
+    }
+    if let Some(headers) = dict.get_item("headers") {
+        let headers = parse_headers(headers.extract::<HashMap<String, String>>()?)?;
+        metadata.extend(headers);
+    }
+    if let Some(file_name) = dict.get_item("file_name") {
+        let file_name = file_name.extract::<&str>()?;
+        metadata = metadata.file_name(file_name);
+    }
+    Ok(metadata)
+}
+
 pub(super) fn extract_sync_request_body(
     body: PyObject,
     body_len: Option<u64>,
@@ -348,7 +603,9 @@ pub(super) fn extract_sync_request_body(
             body_len,
         ))
     } else {
-        Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
+        Err(QiniuBodySizeMissingError::new_err(
+            "`body_len` must be passed",
+        ))
     }
 }
 
@@ -356,18 +613,18 @@ pub(super) fn extract_async_request_body(
     body: PyObject,
     body_len: Option<u64>,
     py: Python<'_>,
-) -> PyResult<AsyncRequestBody<'static>> {
+) -> PyResult<(AsyncRequestBody<'static>, Option<RemotePyCallLocalAgent>)> {
     if let Ok(body) = body.extract::<String>(py) {
-        Ok(AsyncRequestBody::from(body))
+        Ok((AsyncRequestBody::from(body), None))
     } else if let Ok(body) = body.extract::<Vec<u8>>(py) {
-        Ok(AsyncRequestBody::from(body))
+        Ok((AsyncRequestBody::from(body), None))
     } else if let Some(body_len) = body_len {
-        Ok(AsyncRequestBody::from_reader(
-            PythonIoBase::new(body).into_async_read(),
-            body_len,
-        ))
+        let (body, agent) = PythonIoBase::new(body).into_async_read_with_local_agent();
+        Ok((AsyncRequestBody::from_reader(body, body_len), Some(agent)))
     } else {
-        Err(QiniuBodySizeMissingError::new_err("`body` must be passed"))
+        Err(QiniuBodySizeMissingError::new_err(
+            "`body_len` must be passed",
+        ))
     }
 }
 
@@ -438,6 +695,76 @@ pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_cli
     } else {
         Ok(endpoint.extract::<Endpoint>()?.into())
     }
+}
+
+pub(super) fn parse_mime(mime: &str) -> PyResult<qiniu_sdk::http_client::mime::Mime> {
+    mime.parse::<qiniu_sdk::http_client::mime::Mime>()
+        .map_err(QiniuMimeParseError::from_err)
+}
+
+pub(super) fn convert_py_any_to_json_value(any: PyObject) -> PyResult<serde_json::Value> {
+    Python::with_gil(|py| {
+        if let Ok(value) = any.extract::<String>(py) {
+            Ok(serde_json::Value::from(value))
+        } else if let Ok(value) = any.extract::<bool>(py) {
+            Ok(serde_json::Value::from(value))
+        } else if let Ok(value) = any.extract::<u64>(py) {
+            Ok(serde_json::Value::from(value))
+        } else if let Ok(value) = any.extract::<i64>(py) {
+            Ok(serde_json::Value::from(value))
+        } else if let Ok(value) = any.extract::<f64>(py) {
+            Ok(serde_json::Value::from(value))
+        } else if let Ok(values) = any.extract::<Vec<PyObject>>(py) {
+            let values = values
+                .into_iter()
+                .map(convert_py_any_to_json_value)
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(serde_json::Value::from(values))
+        } else if let Ok(values) = any.extract::<HashMap<String, PyObject>>(py) {
+            let values = values
+                .into_iter()
+                .map(|(k, v)| convert_py_any_to_json_value(v).map(|v| (k, v)))
+                .collect::<PyResult<Map<_, _>>>()?;
+            Ok(serde_json::Value::from(values))
+        } else {
+            Err(QiniuUnsupportedTypeError::new_err(format!(
+                "Unsupported type: {:?}",
+                any
+            )))
+        }
+    })
+}
+
+pub(super) fn convert_json_value_to_py_object(value: &serde_json::Value) -> PyResult<PyObject> {
+    Python::with_gil(|py| match value {
+        serde_json::Value::Null => Ok(py.None()),
+        serde_json::Value::String(s) => Ok(s.to_object(py)),
+        serde_json::Value::Number(n) => {
+            if let Some(n) = n.as_u64() {
+                Ok(n.to_object(py))
+            } else if let Some(n) = n.as_i64() {
+                Ok(n.to_object(py))
+            } else if let Some(n) = n.as_f64() {
+                Ok(n.to_object(py))
+            } else {
+                Err(QiniuUnsupportedTypeError::new_err(format!(
+                    "Unsupported number type: {:?}",
+                    n
+                )))
+            }
+        }
+        serde_json::Value::Bool(b) => Ok(b.to_object(py)),
+        serde_json::Value::Array(array) => Ok(array
+            .iter()
+            .map(convert_json_value_to_py_object)
+            .collect::<PyResult<Vec<_>>>()?
+            .to_object(py)),
+        serde_json::Value::Object(object) => Ok(object
+            .into_iter()
+            .map(|(k, v)| convert_json_value_to_py_object(v).map(|v| (k, v)))
+            .collect::<PyResult<HashMap<_, _>>>()?
+            .to_object(py)),
+    })
 }
 
 fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {

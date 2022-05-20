@@ -1,12 +1,13 @@
 use super::{
     exceptions::{
         QiniuHeaderValueEncodingError, QiniuHttpCallError, QiniuInvalidIpAddrError,
-        QiniuInvalidMethodError, QiniuInvalidURLError, QiniuIsahcError,
+        QiniuInvalidMethodError, QiniuInvalidURLError, QiniuIsahcError, QiniuJsonError,
     },
     utils::{
-        convert_headers_to_hashmap, extract_async_request_body, extract_async_response_body,
-        extract_sync_request_body, extract_sync_response_body, parse_headers, parse_ip_addr,
-        parse_ip_addrs, parse_method, parse_port, parse_status_code, parse_uri,
+        convert_headers_to_hashmap, convert_json_value_to_py_object, extract_async_request_body,
+        extract_async_response_body, extract_sync_request_body, extract_sync_response_body,
+        parse_headers, parse_ip_addr, parse_ip_addrs, parse_method, parse_port, parse_status_code,
+        parse_uri, RemotePyCallLocalAgent,
     },
 };
 use futures::AsyncReadExt;
@@ -38,7 +39,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<AsyncHttpRequest>()?;
     m.add_class::<Version>()?;
     m.add_class::<Metrics>()?;
-    m.add_class::<ResponseParts>()?;
+    m.add_class::<HttpResponseParts>()?;
     m.add_class::<SyncHttpResponse>()?;
     m.add_class::<AsyncHttpResponse>()?;
     Ok(m)
@@ -70,7 +71,7 @@ impl HttpCaller {
             py.allow_threads(|| self.0.call(request).map_err(QiniuHttpCallError::from_err))
         })?;
         let (parts, body) = response.into_parts_and_body();
-        Py::new(py, (SyncHttpResponse(body), ResponseParts(parts)))
+        Py::new(py, (SyncHttpResponse::from(body), HttpResponseParts(parts)))
     }
 
     /// 异步发送 HTTP 请求
@@ -78,22 +79,25 @@ impl HttpCaller {
     fn async_call<'p>(&self, request: Py<AsyncHttpRequest>, py: Python<'p>) -> PyResult<&'p PyAny> {
         let http_caller = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
-            let response = AsyncHttpRequest::with_request_from_ref_mut(request, move |request| {
-                Box::pin(async move {
-                    http_caller
-                        .async_call(request)
-                        .await
+            let response =
+                AsyncHttpRequest::with_request_from_ref_mut(request, move |request, agent| {
+                    Box::pin(async move {
+                        if let Some(agent) = agent {
+                            agent.run(http_caller.async_call(request)).await?
+                        } else {
+                            http_caller.async_call(request).await
+                        }
                         .map_err(QiniuHttpCallError::from_err)
+                    })
                 })
-            })
-            .await?;
+                .await?;
             let (parts, body) = response.into_parts_and_body();
             Python::with_gil(|py| {
                 Py::new(
                     py,
                     (
                         AsyncHttpResponse(Arc::new(AsyncMutex::new(body))),
-                        ResponseParts(parts),
+                        HttpResponseParts(parts),
                     ),
                 )
             })
@@ -431,7 +435,7 @@ impl SyncHttpRequest {
         )?;
         let body = body
             .map(|body| extract_sync_request_body(body, body_len, py))
-            .map_or(Ok(None), |v| v.map(Some))?
+            .transpose()?
             .unwrap_or_default();
         Ok((SyncHttpRequest(body), parts))
     }
@@ -469,7 +473,10 @@ impl SyncHttpRequest {
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
 )]
-pub(super) struct AsyncHttpRequest(qiniu_sdk::http::AsyncRequestBody<'static>);
+pub(super) struct AsyncHttpRequest {
+    body: qiniu_sdk::http::AsyncRequestBody<'static>,
+    agent: Option<RemotePyCallLocalAgent>,
+}
 
 #[pymethods]
 impl AsyncHttpRequest {
@@ -513,17 +520,20 @@ impl AsyncHttpRequest {
             receive_response_status,
             receive_response_header,
         )?;
-        let body = body
+        let (body, agent) = body
             .map(|body| extract_async_request_body(body, body_len, py))
-            .map_or(Ok(None), |v| v.map(Some))?
+            .transpose()?
             .unwrap_or_default();
-        Ok((AsyncHttpRequest(body), parts))
+        Ok((AsyncHttpRequest { body, agent }, parts))
     }
 
     /// 设置请求体
     #[setter]
     fn set_body(&mut self, body: Vec<u8>) -> PyResult<()> {
-        self.0 = qiniu_sdk::http::AsyncRequestBody::from(body);
+        *self = Self {
+            body: qiniu_sdk::http::AsyncRequestBody::from(body),
+            agent: None,
+        };
         Ok(())
     }
 }
@@ -531,24 +541,32 @@ impl AsyncHttpRequest {
 impl AsyncHttpRequest {
     pub(super) async fn with_request_from_ref_mut<
         T,
-        F: for<'a> FnOnce(&'a mut qiniu_sdk::http::AsyncRequest) -> BoxFuture<'a, PyResult<T>>,
+        F: for<'a> FnOnce(
+            &'a mut qiniu_sdk::http::AsyncRequest,
+            Option<&'a mut RemotePyCallLocalAgent>,
+        ) -> BoxFuture<'a, PyResult<T>>,
     >(
         request: Py<Self>,
         f: F,
     ) -> PyResult<T> {
-        let mut http_req = Python::with_gil(|py| {
+        let (mut http_req, mut agent) = Python::with_gil(|py| {
             request.try_borrow_mut(py).map(|mut request| {
-                let body = take(&mut request.0);
+                let body = take(&mut request.body);
+                let agent = take(&mut request.agent);
                 let parts = take(request.as_mut()).0;
-                qiniu_sdk::http::Request::from_parts_and_body(parts, body)
+                (
+                    qiniu_sdk::http::Request::from_parts_and_body(parts, body),
+                    agent,
+                )
             })
         })?;
-        let return_value = f(&mut http_req).await;
+        let return_value = f(&mut http_req, agent.as_mut()).await;
         let (parts, body) = http_req.into_parts_and_body();
         Python::with_gil(|py| {
             request.try_borrow_mut(py).map(|mut request| {
                 *request.as_mut() = HttpRequestParts(parts);
-                request.0 = body;
+                request.body = body;
+                request.agent = agent;
             })
         })?;
         return_value
@@ -745,10 +763,10 @@ impl AsRef<qiniu_sdk::http::Metrics> for Metrics {
 }
 
 #[pyclass(subclass)]
-struct ResponseParts(qiniu_sdk::http::ResponseParts);
+pub(super) struct HttpResponseParts(qiniu_sdk::http::ResponseParts);
 
 #[pymethods]
-impl ResponseParts {
+impl HttpResponseParts {
     /// 获取 HTTP 状态码
     #[getter]
     fn get_status_code(&self) -> u16 {
@@ -836,6 +854,12 @@ impl ResponseParts {
     }
 }
 
+impl From<qiniu_sdk::http::ResponseParts> for HttpResponseParts {
+    fn from(parts: qiniu_sdk::http::ResponseParts) -> Self {
+        Self(parts)
+    }
+}
+
 macro_rules! impl_response_body {
     ($name:ident) => {
         #[pymethods]
@@ -912,11 +936,11 @@ macro_rules! impl_response_body {
 /// 阻塞 HTTP 响应
 ///
 /// 封装 HTTP 响应相关字段
-#[pyclass(extends = ResponseParts)]
+#[pyclass(extends = HttpResponseParts)]
 #[pyo3(
     text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
 )]
-struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
+pub(super) struct SyncHttpResponse(qiniu_sdk::http::SyncResponseBody);
 
 #[pymethods]
 impl SyncHttpResponse {
@@ -940,7 +964,7 @@ impl SyncHttpResponse {
         body: Option<PyObject>,
         metrics: Option<Metrics>,
         py: Python<'_>,
-    ) -> PyResult<(SyncHttpResponse, ResponseParts)> {
+    ) -> PyResult<(SyncHttpResponse, HttpResponseParts)> {
         let mut builder = qiniu_sdk::http::Response::builder();
         if let Some(status_code) = status_code {
             builder.status_code(parse_status_code(status_code)?);
@@ -964,7 +988,7 @@ impl SyncHttpResponse {
             builder.metrics(metrics.0);
         }
         let (parts, body) = builder.build().into_parts_and_body();
-        Ok((Self(body), ResponseParts(parts)))
+        Ok((Self(body), HttpResponseParts(parts)))
     }
 
     /// 读取响应体数据
@@ -974,13 +998,11 @@ impl SyncHttpResponse {
         let mut buf = Vec::new();
         if let Ok(size) = u64::try_from(size) {
             buf.reserve(size as usize);
-            (&mut self.0)
-                .take(size)
-                .read_to_end(&mut buf)
-                .map_err(PyIOError::new_err)?;
+            (&mut self.0).take(size).read_to_end(&mut buf)
         } else {
-            self.0.read_to_end(&mut buf).map_err(PyIOError::new_err)?;
+            self.0.read_to_end(&mut buf)
         }
+        .map_err(PyIOError::new_err)?;
         Ok(PyBytes::new(py, &buf))
     }
 
@@ -995,18 +1017,32 @@ impl SyncHttpResponse {
         drop(b);
         Err(PyNotImplementedError::new_err("write"))
     }
+
+    /// 解析 JSON 响应体
+    #[pyo3(text_signature = "($self)")]
+    pub fn parse_json(&mut self) -> PyResult<PyObject> {
+        let value: serde_json::Value =
+            serde_json::from_reader(&mut self.0).map_err(QiniuJsonError::from_err)?;
+        convert_json_value_to_py_object(&value)
+    }
 }
 
 impl_response_body!(SyncHttpResponse);
 
+impl From<qiniu_sdk::http::SyncResponseBody> for SyncHttpResponse {
+    fn from(body: qiniu_sdk::http::SyncResponseBody) -> Self {
+        Self(body)
+    }
+}
+
 /// 异步 HTTP 响应
 ///
 /// 封装 HTTP 响应相关字段
-#[pyclass(extends = ResponseParts)]
+#[pyclass(extends = HttpResponseParts)]
 #[pyo3(
     text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
 )]
-struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
+pub(super) struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
 
 #[pymethods]
 impl AsyncHttpResponse {
@@ -1030,7 +1066,7 @@ impl AsyncHttpResponse {
         body: Option<PyObject>,
         metrics: Option<Metrics>,
         py: Python<'_>,
-    ) -> PyResult<(AsyncHttpResponse, ResponseParts)> {
+    ) -> PyResult<(AsyncHttpResponse, HttpResponseParts)> {
         let mut builder = qiniu_sdk::http::Response::builder();
         if let Some(status_code) = status_code {
             builder.status_code(parse_status_code(status_code)?);
@@ -1054,7 +1090,7 @@ impl AsyncHttpResponse {
             builder.metrics(metrics.0);
         }
         let (parts, body) = builder.build().into_parts_and_body();
-        Ok((Self(Arc::new(AsyncMutex::new(body))), ResponseParts(parts)))
+        Ok((Self::from(body), HttpResponseParts(parts)))
     }
 
     /// 异步读取响应体数据
@@ -1087,9 +1123,32 @@ impl AsyncHttpResponse {
         drop(b);
         Err(PyNotImplementedError::new_err("write"))
     }
+
+    /// 异步解析 JSON 响应体
+    #[pyo3(text_signature = "($self)")]
+    pub fn parse_json<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            reader
+                .read_to_end(&mut buf)
+                .await
+                .map_err(PyIOError::new_err)?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&buf).map_err(QiniuJsonError::from_err)?;
+            convert_json_value_to_py_object(&value)
+        })
+    }
 }
 
 impl_response_body!(AsyncHttpResponse);
+
+impl From<qiniu_sdk::http::AsyncResponseBody> for AsyncHttpResponse {
+    fn from(body: qiniu_sdk::http::AsyncResponseBody) -> Self {
+        Self(Arc::new(AsyncMutex::new(body)))
+    }
+}
 
 fn on_uploading_progress(callback: PyObject) -> qiniu_sdk::http::OnProgressCallback<'static> {
     qiniu_sdk::http::OnProgressCallback::new(move |progress| {

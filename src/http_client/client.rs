@@ -1,18 +1,26 @@
+use super::region::{EndpointsProvider, ServiceName};
 use crate::{
     credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuApiCallErrorInfo, QiniuAuthorizationError,
-        QiniuEmptyChainedResolver, QiniuInvalidPrefixLengthError, QiniuIsahcError,
-        QiniuTrustDNSError,
+        QiniuBodySizeMissingError, QiniuEmptyChainedResolver, QiniuInvalidPrefixLengthError,
+        QiniuIoError, QiniuIsahcError, QiniuJsonError, QiniuTrustDNSError,
     },
-    http::{AsyncHttpRequest, HttpCaller, HttpRequestParts, Metrics, SyncHttpRequest},
+    http::{
+        AsyncHttpRequest, AsyncHttpResponse, HttpCaller, HttpRequestParts, HttpResponseParts,
+        Metrics, SyncHttpRequest, SyncHttpResponse, Version,
+    },
     upload_token::UploadTokenProvider,
-    utils::{extract_ip_addrs_with_port, parse_domain_with_port, parse_ip_addr_with_port},
+    utils::{
+        convert_py_any_to_json_value, extract_async_multipart, extract_ip_addrs_with_port,
+        extract_sync_multipart, parse_domain_with_port, parse_headers, parse_ip_addr_with_port,
+        parse_method, parse_mime, parse_query_pairs, PythonIoBase,
+    },
 };
 use num_integer::Integer;
 use pyo3::prelude::*;
 use qiniu_sdk::prelude::AuthorizationProvider;
-use std::{path::PathBuf, time::Duration};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf, time::Duration};
 
 pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Authorization>()?;
@@ -48,6 +56,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
 /// 七牛鉴权签名
 #[pyclass]
+#[derive(Clone)]
 struct Authorization(qiniu_sdk::http_client::Authorization<'static>);
 
 #[pymethods]
@@ -94,11 +103,14 @@ impl Authorization {
         let auth = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(
             py,
-            AsyncHttpRequest::with_request_from_ref_mut(request, move |request| {
+            AsyncHttpRequest::with_request_from_ref_mut(request, move |request, agent| {
                 Box::pin(async move {
-                    auth.async_sign(request)
-                        .await
-                        .map_err(QiniuAuthorizationError::from_err)
+                    if let Some(agent) = agent {
+                        agent.run(auth.async_sign(request)).await?
+                    } else {
+                        auth.async_sign(request).await
+                    }
+                    .map_err(QiniuAuthorizationError::from_err)
                 })
             }),
         )
@@ -535,9 +547,7 @@ impl Chooser {
             .into_iter()
             .map(parse_ip_addr_with_port)
             .collect::<PyResult<Vec<_>>>()?;
-        let domain_with_port = domain_with_port
-            .map(parse_domain_with_port)
-            .map_or(Ok(None), |v| v.map(Some))?;
+        let domain_with_port = domain_with_port.map(parse_domain_with_port).transpose()?;
         let mut builder = qiniu_sdk::http_client::ChooseOptions::builder();
         if let Some(domain_with_port) = &domain_with_port {
             builder.domain(domain_with_port);
@@ -565,9 +575,7 @@ impl Chooser {
             .iter()
             .map(|s| parse_ip_addr_with_port(s.as_str()))
             .collect::<PyResult<Vec<_>>>()?;
-        let domain_with_port = domain_with_port
-            .map(parse_domain_with_port)
-            .map_or(Ok(None), |v| v.map(Some))?;
+        let domain_with_port = domain_with_port.map(parse_domain_with_port).transpose()?;
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let mut builder = qiniu_sdk::http_client::ChooseOptions::builder();
             if let Some(domain_with_port) = &domain_with_port {
@@ -597,14 +605,9 @@ impl Chooser {
         py: Python<'_>,
     ) -> PyResult<()> {
         let ips = extract_ip_addrs_with_port(&ips)?;
-        let domain = domain
-            .map(parse_domain_with_port)
-            .map_or(Ok(None), |v| v.map(Some))?;
+        let domain = domain.map(parse_domain_with_port).transpose()?;
         let error = error.map(PyErr::from);
-        let error = error
-            .as_ref()
-            .map(convert_api_call_error)
-            .map_or(Ok(None), |v| v.map(Some))?;
+        let error = error.as_ref().map(convert_api_call_error).transpose()?;
         let feedback = Self::make_feedback(
             &ips,
             domain.as_ref(),
@@ -632,15 +635,10 @@ impl Chooser {
     ) -> PyResult<&'p PyAny> {
         let chooser = self.0.to_owned();
         let ips = extract_ip_addrs_with_port(&ips)?;
-        let domain = domain
-            .map(parse_domain_with_port)
-            .map_or(Ok(None), |v| v.map(Some))?;
+        let domain = domain.map(parse_domain_with_port).transpose()?;
         let error = error.map(PyErr::from);
         pyo3_asyncio::async_std::future_into_py(py, async move {
-            let error = error
-                .as_ref()
-                .map(convert_api_call_error)
-                .map_or(Ok(None), |v| v.map(Some))?;
+            let error = error.as_ref().map(convert_api_call_error).transpose()?;
             chooser
                 .async_feedback(Self::make_feedback(
                     &ips,
@@ -1351,5 +1349,297 @@ impl HttpClient {
     #[pyo3(text_signature = "()")]
     fn default_backoff() -> Backoff {
         Backoff(qiniu_sdk::http_client::HttpClient::default_backoff())
+    }
+
+    /// 发出阻塞请求
+    #[pyo3(
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None)"
+    )]
+    #[args(
+        service_names = "None",
+        use_https = "None",
+        version = "None",
+        path = "None",
+        headers = "None",
+        accept_json = "None",
+        accept_application_octet_stream = "None",
+        query = "None",
+        query_pairs = "None",
+        appended_user_agent = "None",
+        authorization = "None",
+        idempotent = "None",
+        bytes = "None",
+        body = "None",
+        body_len = "None",
+        content_type = "None",
+        json = "None",
+        form = "None",
+        multipart = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn call(
+        &self,
+        method: &str,
+        endpoints: EndpointsProvider,
+        service_names: Option<Vec<ServiceName>>,
+        use_https: Option<bool>,
+        version: Option<Version>,
+        path: Option<String>,
+        headers: Option<HashMap<String, String>>,
+        accept_json: Option<bool>,
+        accept_application_octet_stream: Option<bool>,
+        query: Option<String>,
+        query_pairs: Option<PyObject>,
+        appended_user_agent: Option<String>,
+        authorization: Option<Authorization>,
+        idempotent: Option<Idempotent>,
+        bytes: Option<Vec<u8>>,
+        body: Option<PyObject>,
+        body_len: Option<u64>,
+        content_type: Option<&str>,
+        json: Option<PyObject>,
+        form: Option<Vec<(&str, Option<&str>)>>,
+        multipart: Option<HashMap<String, PyObject>>,
+        py: Python<'_>,
+    ) -> PyResult<Py<SyncHttpResponse>> {
+        let service_names = service_names
+            .unwrap_or_default()
+            .into_iter()
+            .map(qiniu_sdk::http_client::ServiceName::from)
+            .collect::<Vec<_>>();
+        let mut builder = self
+            .0
+            .new_request(parse_method(method)?, &service_names, endpoints);
+        Self::set_request_builder(
+            &mut builder,
+            use_https,
+            version,
+            path,
+            headers,
+            accept_json,
+            accept_application_octet_stream,
+            query,
+            query_pairs,
+            appended_user_agent,
+            authorization,
+            idempotent,
+        )?;
+        if let Some(bytes) = bytes {
+            builder.bytes_as_body(bytes, content_type.map(parse_mime).transpose()?);
+        } else if let Some(body) = body {
+            if let Some(body_len) = body_len {
+                builder.stream_as_body(
+                    PythonIoBase::new(body),
+                    body_len,
+                    content_type.map(parse_mime).transpose()?,
+                );
+            } else {
+                return Err(QiniuBodySizeMissingError::new_err(
+                    "`body_len` must be passed",
+                ));
+            }
+        } else if let Some(json) = json {
+            builder
+                .json(convert_py_any_to_json_value(json)?)
+                .map_err(QiniuJsonError::from_err)?;
+        } else if let Some(form) = form {
+            builder.post_form(form);
+        } else if let Some(multipart) = multipart {
+            builder
+                .multipart(extract_sync_multipart(multipart)?)
+                .map_err(QiniuIoError::from_err)?;
+        }
+
+        let response = py.allow_threads(|| builder.call().map_err(QiniuApiCallError::from_err))?;
+        let (parts, body) = response.into_parts_and_body();
+        Py::new(
+            py,
+            (SyncHttpResponse::from(body), HttpResponseParts::from(parts)),
+        )
+    }
+
+    /// 发出异步请求
+    #[pyo3(
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None)"
+    )]
+    #[args(
+        service_names = "None",
+        use_https = "None",
+        version = "None",
+        path = "None",
+        headers = "None",
+        accept_json = "None",
+        accept_application_octet_stream = "None",
+        query = "None",
+        query_pairs = "None",
+        appended_user_agent = "None",
+        authorization = "None",
+        idempotent = "None",
+        bytes = "None",
+        body = "None",
+        body_len = "None",
+        content_type = "None",
+        json = "None",
+        form = "None",
+        multipart = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn async_call<'p>(
+        &'p self,
+        method: String,
+        endpoints: EndpointsProvider,
+        service_names: Option<Vec<ServiceName>>,
+        use_https: Option<bool>,
+        version: Option<Version>,
+        path: Option<String>,
+        headers: Option<HashMap<String, String>>,
+        accept_json: Option<bool>,
+        accept_application_octet_stream: Option<bool>,
+        query: Option<String>,
+        query_pairs: Option<PyObject>,
+        appended_user_agent: Option<String>,
+        authorization: Option<Authorization>,
+        idempotent: Option<Idempotent>,
+        bytes: Option<Vec<u8>>,
+        body: Option<PyObject>,
+        body_len: Option<u64>,
+        content_type: Option<String>,
+        json: Option<PyObject>,
+        form: Option<Vec<(String, Option<String>)>>,
+        multipart: Option<HashMap<String, PyObject>>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let service_names = service_names
+            .unwrap_or_default()
+            .into_iter()
+            .map(qiniu_sdk::http_client::ServiceName::from)
+            .collect::<Vec<_>>();
+        let http_client: qiniu_sdk::http_client::HttpClient = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut local_agent = None;
+            let mut builder =
+                http_client.new_async_request(parse_method(&method)?, &service_names, endpoints);
+            Self::set_request_builder(
+                &mut builder,
+                use_https,
+                version,
+                path,
+                headers,
+                accept_json,
+                accept_application_octet_stream,
+                query,
+                query_pairs,
+                appended_user_agent,
+                authorization,
+                idempotent,
+            )?;
+            if let Some(bytes) = bytes {
+                builder.bytes_as_body(
+                    bytes,
+                    content_type
+                        .as_ref()
+                        .map(|s| parse_mime(s.as_str()))
+                        .transpose()?,
+                );
+            } else if let Some(body) = body {
+                if let Some(body_len) = body_len {
+                    let (stream, agent) =
+                        PythonIoBase::new(body).into_async_read_with_local_agent();
+                    local_agent = Some(agent);
+                    builder.stream_as_body(
+                        stream,
+                        body_len,
+                        content_type
+                            .as_ref()
+                            .map(|s| parse_mime(s.as_str()))
+                            .transpose()?,
+                    );
+                } else {
+                    return Err(QiniuBodySizeMissingError::new_err(
+                        "`body_len` must be passed",
+                    ));
+                }
+            } else if let Some(json) = json {
+                builder
+                    .json(convert_py_any_to_json_value(json)?)
+                    .map_err(QiniuJsonError::from_err)?;
+            } else if let Some(form) = form {
+                builder.post_form(form);
+            } else if let Some(multipart) = multipart {
+                builder
+                    .multipart(extract_async_multipart(multipart)?)
+                    .await
+                    .map_err(QiniuIoError::from_err)?;
+            }
+
+            let response = if let Some(mut local_agent) = local_agent {
+                local_agent.run(builder.call()).await?
+            } else {
+                builder.call().await
+            }
+            .map_err(QiniuApiCallError::from_err)?;
+            let (parts, body) = response.into_parts_and_body();
+            Python::with_gil(|py| {
+                Py::new(
+                    py,
+                    (
+                        AsyncHttpResponse::from(body),
+                        HttpResponseParts::from(parts),
+                    ),
+                )
+            })
+        })
+    }
+}
+
+impl HttpClient {
+    #[allow(clippy::too_many_arguments)]
+    fn set_request_builder<B, E>(
+        builder: &mut qiniu_sdk::http_client::RequestBuilder<'_, B, E>,
+        use_https: Option<bool>,
+        version: Option<Version>,
+        path: Option<String>,
+        headers: Option<HashMap<String, String>>,
+        accept_json: Option<bool>,
+        accept_application_octet_stream: Option<bool>,
+        query: Option<String>,
+        query_pairs: Option<PyObject>,
+        appended_user_agent: Option<String>,
+        authorization: Option<Authorization>,
+        idempotent: Option<Idempotent>,
+    ) -> PyResult<()> {
+        if let Some(use_https) = use_https {
+            builder.use_https(use_https);
+        }
+        if let Some(version) = version {
+            builder.version(version.into());
+        }
+        if let Some(path) = path {
+            builder.path(path);
+        }
+        if let Some(headers) = headers {
+            builder.headers(Cow::Owned(parse_headers(headers)?));
+        }
+        if let Some(true) = accept_json {
+            builder.accept_json();
+        } else if let Some(true) = accept_application_octet_stream {
+            builder.accept_application_octet_stream();
+        }
+        if let Some(query) = query {
+            builder.query(query);
+        }
+        if let Some(query_pairs) = query_pairs {
+            builder.query_pairs(parse_query_pairs(query_pairs)?);
+        }
+        if let Some(appended_user_agent) = appended_user_agent {
+            builder.appended_user_agent(appended_user_agent);
+        }
+        if let Some(authorization) = authorization {
+            builder.authorization(authorization.0);
+        }
+        if let Some(idempotent) = idempotent {
+            builder.idempotent(idempotent.into());
+        }
+        Ok(())
     }
 }

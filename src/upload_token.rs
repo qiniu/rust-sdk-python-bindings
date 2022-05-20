@@ -2,12 +2,13 @@ use super::{
     credential::CredentialProvider,
     exceptions::{
         QiniuBase64Error, QiniuCallbackError, QiniuIoError, QiniuJsonError, QiniuTimeError,
-        QiniuUnsupportedTypeError, QiniuUploadTokenFormatError,
+        QiniuUploadTokenFormatError,
     },
+    utils::{convert_json_value_to_py_object, convert_py_any_to_json_value},
 };
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyString, PyTuple},
+    types::{PyString, PyTuple},
 };
 use qiniu_sdk::{
     prelude::UploadTokenProviderExt,
@@ -18,6 +19,7 @@ use qiniu_sdk::{
 };
 use std::{
     borrow::Cow,
+    collections::HashMap,
     future::Future,
     mem::take,
     pin::Pin,
@@ -59,7 +61,7 @@ impl UploadPolicy {
     fn new_for_bucket(
         bucket: &str,
         upload_token_lifetime: u64,
-        fields: Option<&PyDict>,
+        fields: Option<HashMap<String, PyObject>>,
     ) -> PyResult<UploadPolicyBuilder> {
         UploadPolicyBuilder::new_for_bucket(bucket, upload_token_lifetime, fields)
     }
@@ -77,7 +79,7 @@ impl UploadPolicy {
         bucket: &str,
         object: &str,
         upload_token_lifetime: u64,
-        fields: Option<&PyDict>,
+        fields: Option<HashMap<String, PyObject>>,
     ) -> PyResult<UploadPolicyBuilder> {
         UploadPolicyBuilder::new_for_object(bucket, object, upload_token_lifetime, fields)
     }
@@ -95,7 +97,7 @@ impl UploadPolicy {
         bucket: &str,
         prefix: &str,
         upload_token_lifetime: u64,
-        fields: Option<&PyDict>,
+        fields: Option<HashMap<String, PyObject>>,
     ) -> PyResult<UploadPolicyBuilder> {
         UploadPolicyBuilder::new_for_objects_with_prefix(
             bucket,
@@ -154,7 +156,7 @@ impl UploadPolicy {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .map(|duration| duration.as_secs())
             })
-            .map_or(Ok(None), |v| v.map(Some))
+            .transpose()
             .map_err(QiniuTimeError::from_err)
     }
 
@@ -259,11 +261,11 @@ impl UploadPolicy {
 
     /// 根据指定的上传策略字段获取相应的值
     #[pyo3(text_signature = "($self, key)")]
-    fn get(&self, key: &str, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn get(&self, key: &str) -> PyResult<Option<PyObject>> {
         self.0
             .get(key)
-            .map(|v| convert_json_value_to_py_object(v, py))
-            .map_or(Ok(None), |v| v.map(Some))
+            .map(convert_json_value_to_py_object)
+            .transpose()
     }
 
     /// 获取上传策略的字段迭代器
@@ -274,10 +276,10 @@ impl UploadPolicy {
 
     /// 获取上传策略的字段值的迭代器
     #[pyo3(text_signature = "($self)")]
-    fn values(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
+    fn values(&self) -> PyResult<Vec<PyObject>> {
         self.0
             .values()
-            .map(|v| convert_json_value_to_py_object(v, py))
+            .map(convert_json_value_to_py_object)
             .collect()
     }
 
@@ -300,56 +302,6 @@ impl UploadPolicy {
     }
 }
 
-fn convert_py_any_to_json_value(any: &PyAny) -> PyResult<serde_json::Value> {
-    // TODO: extract all possible values
-    if let Ok(value) = any.extract::<String>() {
-        Ok(serde_json::Value::from(value))
-    } else if let Ok(value) = any.extract::<bool>() {
-        Ok(serde_json::Value::from(value))
-    } else if let Ok(value) = any.extract::<u64>() {
-        Ok(serde_json::Value::from(value))
-    } else if let Ok(value) = any.extract::<i64>() {
-        Ok(serde_json::Value::from(value))
-    } else if let Ok(value) = any.extract::<f64>() {
-        Ok(serde_json::Value::from(value))
-    } else {
-        Err(QiniuUnsupportedTypeError::new_err(format!(
-            "Unsupported type: {:?}",
-            any
-        )))
-    }
-}
-
-fn convert_json_value_to_py_object(
-    value: &serde_json::Value,
-    py: Python<'_>,
-) -> PyResult<PyObject> {
-    // TODO: convert all possible values
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::String(s) => Ok(s.to_object(py)),
-        serde_json::Value::Number(n) => {
-            if let Some(n) = n.as_u64() {
-                Ok(n.to_object(py))
-            } else if let Some(n) = n.as_i64() {
-                Ok(n.to_object(py))
-            } else if let Some(n) = n.as_f64() {
-                Ok(n.to_object(py))
-            } else {
-                Err(QiniuUnsupportedTypeError::new_err(format!(
-                    "Unsupported number type: {:?}",
-                    n
-                )))
-            }
-        }
-        serde_json::Value::Bool(b) => Ok(b.to_object(py)),
-        v => Err(QiniuUnsupportedTypeError::new_err(format!(
-            "Unsupported type: {:?}",
-            v
-        ))),
-    }
-}
-
 /// 上传策略构建器
 ///
 /// 用于生成上传策略，一旦生成完毕，上传策略将无法被修改
@@ -367,7 +319,11 @@ impl UploadPolicyBuilder {
     #[staticmethod]
     #[args(fields = "**")]
     #[pyo3(text_signature = "(bucket, lifetime_secs, **fields)")]
-    fn new_for_bucket(bucket: &str, lifetime_secs: u64, fields: Option<&PyDict>) -> PyResult<Self> {
+    fn new_for_bucket(
+        bucket: &str,
+        lifetime_secs: u64,
+        fields: Option<HashMap<String, PyObject>>,
+    ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_bucket(
             bucket,
             Duration::from_secs(lifetime_secs),
@@ -391,7 +347,7 @@ impl UploadPolicyBuilder {
         bucket: &str,
         object: &str,
         lifetime_secs: u64,
-        fields: Option<&PyDict>,
+        fields: Option<HashMap<String, PyObject>>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_object(
             bucket,
@@ -417,7 +373,7 @@ impl UploadPolicyBuilder {
         bucket: &str,
         prefix: &str,
         lifetime_secs: u64,
-        fields: Option<&PyDict>,
+        fields: Option<HashMap<String, PyObject>>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::upload_token::UploadPolicy::new_for_objects_with_prefix(
             bucket,
@@ -566,15 +522,10 @@ impl ToPyObject for UploadPolicyBuilder {
 impl UploadPolicyBuilder {
     fn set_builder_from_py_dict(
         builder: &mut qiniu_sdk::upload_token::UploadPolicyBuilder,
-        fields: &PyDict,
+        fields: HashMap<String, PyObject>,
     ) -> PyResult<()> {
-        for key in fields.keys().iter() {
-            if let Some(value) = fields.get_item(key) {
-                builder.set(
-                    key.extract::<String>()?,
-                    convert_py_any_to_json_value(value)?,
-                );
-            }
+        for (key, value) in fields.into_iter() {
+            builder.set(key, convert_py_any_to_json_value(value)?);
         }
         Ok(())
     }

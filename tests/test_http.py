@@ -3,7 +3,9 @@ from qiniu_sdk_bindings import http
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from aiohttp import web
 import unittest
-import time
+import os
+import io
+import aiofiles
 
 
 class TestSyncHttpRequest(unittest.TestCase):
@@ -128,14 +130,19 @@ class TestAsyncIsahcHttpCaller(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
-            req = http.AsyncHttpRequest(
-                url='http://127.0.0.1:8089/robots.txt', method='PUT', body=b'hello world')
-            resp = await http.IsahcHttpCaller().async_call(req)
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.headers['content-type'], 'text/plain')
-            self.assertEqual(resp.headers['x-reqid'], 'fakereqid')
-            self.assertEqual(resp.server_ip, '127.0.0.1')
-            self.assertEqual(resp.server_port, 8089)
-            self.assertEqual(await resp.readall(), b'hello world')
+            async with aiofiles.tempfile.TemporaryFile('wb+') as f:
+                rand_bytes = os.urandom(1 << 10)
+                await f.write(rand_bytes)
+                await f.seek(0, io.SEEK_SET)
+                req = http.AsyncHttpRequest(
+                    url='http://127.0.0.1:8089/robots.txt', method='PUT', body=f, body_len=1 << 10)
+                resp = await http.IsahcHttpCaller().async_call(req)
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.headers['content-type'], 'text/plain')
+                self.assertEqual(resp.headers['x-reqid'], 'fakereqid')
+                self.assertEqual(resp.server_ip, '127.0.0.1')
+                self.assertEqual(resp.server_port, 8089)
+                resp_body = await resp.readall()
+                self.assertEqual(resp_body, rand_bytes)
         finally:
             await runner.cleanup()
