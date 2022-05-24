@@ -3,24 +3,27 @@ use crate::{
     credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuApiCallErrorInfo, QiniuAuthorizationError,
-        QiniuBodySizeMissingError, QiniuEmptyChainedResolver, QiniuInvalidPrefixLengthError,
-        QiniuIoError, QiniuIsahcError, QiniuJsonError, QiniuTrustDNSError,
+        QiniuBodySizeMissingError, QiniuEmptyChainedResolver, QiniuHeaderValueEncodingError,
+        QiniuInvalidPrefixLengthError, QiniuIoError, QiniuIsahcError, QiniuJsonError,
+        QiniuTrustDNSError,
     },
     http::{
         AsyncHttpRequest, AsyncHttpResponse, HttpCaller, HttpRequestParts, HttpResponseParts,
-        Metrics, SyncHttpRequest, SyncHttpResponse, Version,
+        Metrics, SyncHttpRequest, SyncHttpResponse, TransferProgressInfo, Version,
     },
     upload_token::UploadTokenProvider,
     utils::{
-        convert_py_any_to_json_value, extract_async_multipart, extract_ip_addrs_with_port,
-        extract_sync_multipart, parse_domain_with_port, parse_headers, parse_ip_addr_with_port,
-        parse_method, parse_mime, parse_query_pairs, PythonIoBase,
+        convert_headers_to_hashmap, convert_py_any_to_json_value, extract_async_multipart,
+        extract_ip_addrs_with_port, extract_sync_multipart, parse_domain_with_port, parse_headers,
+        parse_ip_addr_with_port, parse_ip_addrs, parse_method, parse_mime, parse_query_pairs,
+        PythonIoBase,
     },
 };
+use anyhow::Result as AnyResult;
 use num_integer::Integer;
 use pyo3::prelude::*;
 use qiniu_sdk::prelude::AuthorizationProvider;
-use std::{borrow::Cow, collections::HashMap, path::PathBuf, time::Duration};
+use std::{borrow::Cow, collections::HashMap, mem::transmute, path::PathBuf, time::Duration};
 
 pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<Authorization>()?;
@@ -50,6 +53,9 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<ExponentialBackoff>()?;
     m.add_class::<LimitedBackoff>()?;
     m.add_class::<HttpClient>()?;
+    m.add_class::<SimplifiedCallbackContext>()?;
+    m.add_class::<CallbackContext>()?;
+    m.add_class::<ExtendedCallbackContext>()?;
 
     Ok(())
 }
@@ -651,6 +657,14 @@ impl Chooser {
             Ok(())
         })
     }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl qiniu_sdk::http_client::Chooser for Chooser {
@@ -854,6 +868,17 @@ enum Idempotent {
     Never = 2,
 }
 
+#[pymethods]
+impl Idempotent {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
 impl From<Idempotent> for qiniu_sdk::http_client::Idempotent {
     fn from(idempotent: Idempotent) -> Self {
         match idempotent {
@@ -895,6 +920,17 @@ enum RetryDecision {
 
     /// 节流
     Throttled = 4,
+}
+
+#[pymethods]
+impl RetryDecision {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl From<RetryDecision> for qiniu_sdk::http_client::RetryDecision {
@@ -956,6 +992,14 @@ impl RequestRetrier {
         }
         let opts = builder.build();
         Ok(self.0.retry(&mut *request, opts).decision().into())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }
 
@@ -1086,6 +1130,14 @@ impl Backoff {
         }
         let opts = builder.build();
         Ok(self.0.time(&mut *request, opts).duration().as_nanos())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
     }
 }
 
@@ -1269,7 +1321,7 @@ fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(
 /// 用于发送 HTTP 请求的入口。
 #[pyclass]
 #[pyo3(
-    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None)"
+    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
 )]
 #[derive(Clone)]
 struct HttpClient(qiniu_sdk::http_client::HttpClient);
@@ -1277,6 +1329,28 @@ struct HttpClient(qiniu_sdk::http_client::HttpClient);
 #[pymethods]
 impl HttpClient {
     #[new]
+    #[args(
+        http_caller = "None",
+        use_https = "None",
+        appended_user_agent = "None",
+        request_retrier = "None",
+        backoff = "None",
+        chooser = "None",
+        resolver = "None",
+        uploading_progress = "None",
+        receive_response_status = "None",
+        receive_response_header = "None",
+        to_resolve_domain = "None",
+        domain_resolved = "None",
+        to_choose_ips = "None",
+        ips_chosen = "None",
+        before_request_signed = "None",
+        after_request_signed = "None",
+        response_ok = "None",
+        before_backoff = "None",
+        after_backoff = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         http_caller: Option<HttpCaller>,
         use_https: Option<bool>,
@@ -1285,6 +1359,18 @@ impl HttpClient {
         backoff: Option<Backoff>,
         chooser: Option<Chooser>,
         resolver: Option<Resolver>,
+        uploading_progress: Option<PyObject>,
+        receive_response_status: Option<PyObject>,
+        receive_response_header: Option<PyObject>,
+        to_resolve_domain: Option<PyObject>,
+        domain_resolved: Option<PyObject>,
+        to_choose_ips: Option<PyObject>,
+        ips_chosen: Option<PyObject>,
+        before_request_signed: Option<PyObject>,
+        after_request_signed: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        before_backoff: Option<PyObject>,
+        after_backoff: Option<PyObject>,
     ) -> PyResult<Self> {
         let mut builder = if let Some(http_caller) = http_caller {
             qiniu_sdk::http_client::HttpClient::builder(http_caller)
@@ -1310,8 +1396,42 @@ impl HttpClient {
         if let Some(resolver) = resolver {
             builder.resolver(resolver);
         }
-
-        // TODO: ADD CALLBACKS
+        if let Some(uploading_progress) = uploading_progress {
+            builder.on_uploading_progress(on_uploading_progress(uploading_progress));
+        }
+        if let Some(receive_response_status) = receive_response_status {
+            builder.on_receive_response_status(on_receive_response_status(receive_response_status));
+        }
+        if let Some(receive_response_header) = receive_response_header {
+            builder.on_receive_response_header(on_receive_response_header(receive_response_header));
+        }
+        if let Some(to_resolve_domain) = to_resolve_domain {
+            builder.on_to_resolve_domain(on_to_resolve_domain(to_resolve_domain));
+        }
+        if let Some(domain_resolved) = domain_resolved {
+            builder.on_domain_resolved(on_domain_resolved(domain_resolved));
+        }
+        if let Some(to_choose_ips) = to_choose_ips {
+            builder.on_to_choose_ips(on_to_choose_ips(to_choose_ips));
+        }
+        if let Some(ips_chosen) = ips_chosen {
+            builder.on_ips_chosen(on_ips_chosen(ips_chosen));
+        }
+        if let Some(before_request_signed) = before_request_signed {
+            builder.on_before_request_signed(on_request_signed(before_request_signed));
+        }
+        if let Some(after_request_signed) = after_request_signed {
+            builder.on_after_request_signed(on_request_signed(after_request_signed));
+        }
+        if let Some(response_ok) = response_ok {
+            builder.on_response(on_response(response_ok));
+        }
+        if let Some(before_backoff) = before_backoff {
+            builder.on_before_backoff(on_backoff(before_backoff));
+        }
+        if let Some(after_backoff) = after_backoff {
+            builder.on_after_backoff(on_backoff(after_backoff));
+        }
 
         Ok(Self(builder.build()))
     }
@@ -1353,7 +1473,7 @@ impl HttpClient {
 
     /// 发出阻塞请求
     #[pyo3(
-        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None)"
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         service_names = "None",
@@ -1374,7 +1494,19 @@ impl HttpClient {
         content_type = "None",
         json = "None",
         form = "None",
-        multipart = "None"
+        multipart = "None",
+        uploading_progress = "None",
+        receive_response_status = "None",
+        receive_response_header = "None",
+        to_resolve_domain = "None",
+        domain_resolved = "None",
+        to_choose_ips = "None",
+        ips_chosen = "None",
+        before_request_signed = "None",
+        after_request_signed = "None",
+        response_ok = "None",
+        before_backoff = "None",
+        after_backoff = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn call(
@@ -1400,6 +1532,18 @@ impl HttpClient {
         json: Option<PyObject>,
         form: Option<Vec<(&str, Option<&str>)>>,
         multipart: Option<HashMap<String, PyObject>>,
+        uploading_progress: Option<PyObject>,
+        receive_response_status: Option<PyObject>,
+        receive_response_header: Option<PyObject>,
+        to_resolve_domain: Option<PyObject>,
+        domain_resolved: Option<PyObject>,
+        to_choose_ips: Option<PyObject>,
+        ips_chosen: Option<PyObject>,
+        before_request_signed: Option<PyObject>,
+        after_request_signed: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        before_backoff: Option<PyObject>,
+        after_backoff: Option<PyObject>,
         py: Python<'_>,
     ) -> PyResult<Py<SyncHttpResponse>> {
         let service_names = service_names
@@ -1423,6 +1567,18 @@ impl HttpClient {
             appended_user_agent,
             authorization,
             idempotent,
+            uploading_progress,
+            receive_response_status,
+            receive_response_header,
+            to_resolve_domain,
+            domain_resolved,
+            to_choose_ips,
+            ips_chosen,
+            before_request_signed,
+            after_request_signed,
+            response_ok,
+            before_backoff,
+            after_backoff,
         )?;
         if let Some(bytes) = bytes {
             builder.bytes_as_body(bytes, content_type.map(parse_mime).transpose()?);
@@ -1460,7 +1616,7 @@ impl HttpClient {
 
     /// 发出异步请求
     #[pyo3(
-        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None)"
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         service_names = "None",
@@ -1481,7 +1637,19 @@ impl HttpClient {
         content_type = "None",
         json = "None",
         form = "None",
-        multipart = "None"
+        multipart = "None",
+        uploading_progress = "None",
+        receive_response_status = "None",
+        receive_response_header = "None",
+        to_resolve_domain = "None",
+        domain_resolved = "None",
+        to_choose_ips = "None",
+        ips_chosen = "None",
+        before_request_signed = "None",
+        after_request_signed = "None",
+        response_ok = "None",
+        before_backoff = "None",
+        after_backoff = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn async_call<'p>(
@@ -1507,6 +1675,18 @@ impl HttpClient {
         json: Option<PyObject>,
         form: Option<Vec<(String, Option<String>)>>,
         multipart: Option<HashMap<String, PyObject>>,
+        uploading_progress: Option<PyObject>,
+        receive_response_status: Option<PyObject>,
+        receive_response_header: Option<PyObject>,
+        to_resolve_domain: Option<PyObject>,
+        domain_resolved: Option<PyObject>,
+        to_choose_ips: Option<PyObject>,
+        ips_chosen: Option<PyObject>,
+        before_request_signed: Option<PyObject>,
+        after_request_signed: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        before_backoff: Option<PyObject>,
+        after_backoff: Option<PyObject>,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
         let service_names = service_names
@@ -1532,6 +1712,18 @@ impl HttpClient {
                 appended_user_agent,
                 authorization,
                 idempotent,
+                uploading_progress,
+                receive_response_status,
+                receive_response_header,
+                to_resolve_domain,
+                domain_resolved,
+                to_choose_ips,
+                ips_chosen,
+                before_request_signed,
+                after_request_signed,
+                response_ok,
+                before_backoff,
+                after_backoff,
             )?;
             if let Some(bytes) = bytes {
                 builder.bytes_as_body(
@@ -1590,6 +1782,14 @@ impl HttpClient {
             })
         })
     }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl HttpClient {
@@ -1607,6 +1807,18 @@ impl HttpClient {
         appended_user_agent: Option<String>,
         authorization: Option<Authorization>,
         idempotent: Option<Idempotent>,
+        uploading_progress: Option<PyObject>,
+        receive_response_status: Option<PyObject>,
+        receive_response_header: Option<PyObject>,
+        to_resolve_domain: Option<PyObject>,
+        domain_resolved: Option<PyObject>,
+        to_choose_ips: Option<PyObject>,
+        ips_chosen: Option<PyObject>,
+        before_request_signed: Option<PyObject>,
+        after_request_signed: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        before_backoff: Option<PyObject>,
+        after_backoff: Option<PyObject>,
     ) -> PyResult<()> {
         if let Some(use_https) = use_https {
             builder.use_https(use_https);
@@ -1640,6 +1852,412 @@ impl HttpClient {
         if let Some(idempotent) = idempotent {
             builder.idempotent(idempotent.into());
         }
+        if let Some(uploading_progress) = uploading_progress {
+            builder.on_uploading_progress(on_uploading_progress(uploading_progress));
+        }
+        if let Some(receive_response_status) = receive_response_status {
+            builder.on_receive_response_status(on_receive_response_status(receive_response_status));
+        }
+        if let Some(receive_response_header) = receive_response_header {
+            builder.on_receive_response_header(on_receive_response_header(receive_response_header));
+        }
+        if let Some(to_resolve_domain) = to_resolve_domain {
+            builder.on_to_resolve_domain(on_to_resolve_domain(to_resolve_domain));
+        }
+        if let Some(domain_resolved) = domain_resolved {
+            builder.on_domain_resolved(on_domain_resolved(domain_resolved));
+        }
+        if let Some(to_choose_ips) = to_choose_ips {
+            builder.on_to_choose_ips(on_to_choose_ips(to_choose_ips));
+        }
+        if let Some(ips_chosen) = ips_chosen {
+            builder.on_ips_chosen(on_ips_chosen(ips_chosen));
+        }
+        if let Some(before_request_signed) = before_request_signed {
+            builder.on_before_request_signed(on_request_signed(before_request_signed));
+        }
+        if let Some(after_request_signed) = after_request_signed {
+            builder.on_after_request_signed(on_request_signed(after_request_signed));
+        }
+        if let Some(response_ok) = response_ok {
+            builder.on_response(on_response(response_ok));
+        }
+        if let Some(before_backoff) = before_backoff {
+            builder.on_before_backoff(on_backoff(before_backoff));
+        }
+        if let Some(after_backoff) = after_backoff {
+            builder.on_after_backoff(on_backoff(after_backoff));
+        }
+        Ok(())
+    }
+}
+
+macro_rules! impl_callback_context {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 是否使用 HTTPS 协议
+            #[getter]
+            fn get_use_https(&self) -> bool {
+                self.0.use_https()
+            }
+
+            /// 获取请求 HTTP 方法
+            #[getter]
+            fn get_method(&self) -> String {
+                self.0.method().to_string()
+            }
+
+            /// 获取请求 HTTP 版本
+            #[getter]
+            fn get_version(&self) -> Version {
+                self.0.version().into()
+            }
+
+            /// 获取请求路径
+            #[getter]
+            fn get_path(&self) -> &str {
+                self.0.path()
+            }
+
+            /// 获取请求查询参数
+            #[getter]
+            fn get_query(&self) -> &str {
+                self.0.query()
+            }
+
+            /// 获取请求查询对
+            #[getter]
+            fn get_query_pairs(&self) -> Vec<(&str, &str)> {
+                self.0
+                    .query_pairs()
+                    .iter()
+                    .map(|(key, value)| (key.as_ref(), value.as_ref()))
+                    .collect()
+            }
+
+            /// 获取请求 HTTP Headers
+            #[getter]
+            fn get_headers(&self) -> PyResult<HashMap<String, String>> {
+                convert_headers_to_hashmap(self.0.headers())
+            }
+
+            /// 获取追加的 UserAgent
+            #[getter]
+            fn get_appended_user_agent(&self) -> &str {
+                self.0.appended_user_agent().as_str()
+            }
+
+            /// 获取七牛鉴权签名
+            #[getter]
+            fn get_idempotent(&self) -> Idempotent {
+                self.0.idempotent().into()
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+/// 简化回调函数上下文
+///
+/// 用于在回调函数中获取请求相关信息，如请求路径、请求方法、查询参数、请求头等。
+#[pyclass]
+#[derive(Clone)]
+struct SimplifiedCallbackContext(&'static dyn qiniu_sdk::http_client::SimplifiedCallbackContext);
+
+impl SimplifiedCallbackContext {
+    fn new(ctx: &dyn qiniu_sdk::http_client::SimplifiedCallbackContext) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(ctx) })
+    }
+}
+
+impl_callback_context!(SimplifiedCallbackContext);
+
+fn on_uploading_progress(
+    callback: PyObject,
+) -> impl Fn(
+    &dyn qiniu_sdk::http_client::SimplifiedCallbackContext,
+    qiniu_sdk::http::TransferProgressInfo<'_>,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, progress| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (
+                    SimplifiedCallbackContext::new(context),
+                    TransferProgressInfo::new(progress.transferred_bytes(), progress.total_bytes()),
+                ),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn on_receive_response_status(
+    callback: PyObject,
+) -> impl Fn(
+    &dyn qiniu_sdk::http_client::SimplifiedCallbackContext,
+    qiniu_sdk::http::StatusCode,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, status_code| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (
+                    SimplifiedCallbackContext::new(context),
+                    status_code.as_u16(),
+                ),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn on_receive_response_header(
+    callback: PyObject,
+) -> impl Fn(
+    &dyn qiniu_sdk::http_client::SimplifiedCallbackContext,
+    &qiniu_sdk::http::HeaderName,
+    &qiniu_sdk::http::HeaderValue,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, header_name, header_value| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (
+                    SimplifiedCallbackContext::new(context),
+                    header_name.as_str(),
+                    header_value
+                        .to_str()
+                        .map_err(QiniuHeaderValueEncodingError::from_err)?,
+                ),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+/// 回调函数上下文
+///
+/// 基于简化回调函数上下文，并在此基础上增加获取扩展信息的引用和可变引用的方法。
+#[pyclass]
+struct CallbackContext(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
+
+impl CallbackContext {
+    fn new(ctx: &mut dyn qiniu_sdk::http_client::CallbackContext) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(ctx) })
+    }
+}
+
+impl_callback_context!(CallbackContext);
+
+fn on_to_resolve_domain(
+    callback: PyObject,
+) -> impl Fn(&mut dyn qiniu_sdk::http_client::CallbackContext, &str) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, domain| {
+        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), domain)))?;
+        Ok(())
+    }
+}
+
+fn on_domain_resolved(
+    callback: PyObject,
+) -> impl Fn(
+    &mut dyn qiniu_sdk::http_client::CallbackContext,
+    &str,
+    &qiniu_sdk::http_client::ResolveAnswers,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, domain, answers| {
+        Python::with_gil(|py| {
+            let ips = answers
+                .ip_addrs()
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>();
+            callback.call1(py, (CallbackContext::new(context), domain, ips))
+        })?;
+        Ok(())
+    }
+}
+
+fn on_to_choose_ips(
+    callback: PyObject,
+) -> impl Fn(
+    &mut dyn qiniu_sdk::http_client::CallbackContext,
+    &[qiniu_sdk::http_client::IpAddrWithPort],
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, ips| {
+        let ips = ips.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
+        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), ips)))?;
+        Ok(())
+    }
+}
+
+fn on_ips_chosen(
+    callback: PyObject,
+) -> impl Fn(
+    &mut dyn qiniu_sdk::http_client::CallbackContext,
+    &[qiniu_sdk::http_client::IpAddrWithPort],
+    &[qiniu_sdk::http_client::IpAddrWithPort],
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, before, after| {
+        let before = before.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
+        let after = after.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
+        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), before, after)))?;
+        Ok(())
+    }
+}
+
+/// 扩展的回调函数上下文
+///
+/// 基于回调函数上下文，并在此基础上增加返回部分请求信息的可变引用，以及 UserAgent 和经过解析的 IP 地址列表的获取和设置方法。
+#[pyclass]
+struct ExtendedCallbackContext(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
+
+impl ExtendedCallbackContext {
+    fn new(ctx: &mut dyn qiniu_sdk::http_client::ExtendedCallbackContext) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(ctx) })
+    }
+}
+
+impl_callback_context!(ExtendedCallbackContext);
+
+#[pymethods]
+impl ExtendedCallbackContext {
+    /// 获取 HTTP 请求 URL
+    #[getter]
+    fn get_url(&self) -> String {
+        self.0.url().to_string()
+    }
+
+    /// 设置请求 HTTP 版本
+    #[setter]
+    fn set_url(&mut self, version: Version) {
+        *self.0.version_mut() = version.into();
+    }
+
+    /// 设置请求 HTTP Headers
+    #[setter]
+    fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
+        *self.0.headers_mut() = parse_headers(headers)?;
+        Ok(())
+    }
+
+    /// 获取 UserAgent
+    #[getter]
+    fn get_user_agent(&self) -> String {
+        self.0.user_agent().to_string()
+    }
+
+    /// 设置追加的 UserAgent
+    #[setter]
+    fn set_appended_user_agent(&mut self, appended_user_agent: &str) {
+        self.0.set_appended_user_agent(appended_user_agent.into());
+    }
+
+    /// 获取经过解析的 IP 地址列表
+    #[getter]
+    fn get_resolved_ip_addrs(&self) -> Option<Vec<String>> {
+        self.0
+            .resolved_ip_addrs()
+            .map(|ips| ips.iter().map(|ip| ip.to_string()).collect())
+    }
+
+    /// 设置经过解析的 IP 地址列表
+    #[setter]
+    fn set_resolved_ip_addrs(&mut self, resolved_ip_addrs: Vec<String>) -> PyResult<()> {
+        self.0
+            .set_resolved_ip_addrs(parse_ip_addrs(resolved_ip_addrs)?);
+        Ok(())
+    }
+
+    /// 获取重试统计信息
+    #[getter]
+    fn get_retried(&self) -> RetriedStatsInfo {
+        RetriedStatsInfo(self.0.retried().to_owned())
+    }
+}
+
+fn on_request_signed(
+    callback: PyObject,
+) -> impl Fn(&mut dyn qiniu_sdk::http_client::ExtendedCallbackContext) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context| {
+        Python::with_gil(|py| callback.call1(py, (ExtendedCallbackContext::new(context),)))?;
+        Ok(())
+    }
+}
+
+fn on_response(
+    callback: PyObject,
+) -> impl Fn(
+    &mut dyn qiniu_sdk::http_client::ExtendedCallbackContext,
+    &qiniu_sdk::http::ResponseParts,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, parts| {
+        let parts = parts.clone_without_extensions();
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (
+                    ExtendedCallbackContext::new(context),
+                    HttpResponseParts::from(parts),
+                ),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn on_backoff(
+    callback: PyObject,
+) -> impl Fn(&mut dyn qiniu_sdk::http_client::ExtendedCallbackContext, Duration) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, duration| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (ExtendedCallbackContext::new(context), duration.as_nanos()),
+            )
+        })?;
         Ok(())
     }
 }

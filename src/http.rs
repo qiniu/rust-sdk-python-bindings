@@ -15,7 +15,7 @@ use futures::{future::BoxFuture, lock::Mutex as AsyncMutex};
 use pyo3::{
     exceptions::{PyIOError, PyNotImplementedError},
     prelude::*,
-    types::{PyBytes, PyTuple},
+    types::PyBytes,
 };
 use qiniu_sdk::http::{Method, Uri};
 use std::{
@@ -146,7 +146,7 @@ impl IsahcHttpCaller {
 #[pyclass]
 #[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
 #[derive(Clone, Copy, Debug)]
-struct TransferProgressInfo {
+pub(super) struct TransferProgressInfo {
     transferred_bytes: u64,
     total_bytes: u64,
 }
@@ -154,7 +154,7 @@ struct TransferProgressInfo {
 #[pymethods]
 impl TransferProgressInfo {
     #[new]
-    fn new(transferred_bytes: u64, total_bytes: u64) -> Self {
+    pub(super) fn new(transferred_bytes: u64, total_bytes: u64) -> Self {
         Self {
             transferred_bytes,
             total_bytes,
@@ -1153,14 +1153,13 @@ impl From<qiniu_sdk::http::AsyncResponseBody> for AsyncHttpResponse {
 fn on_uploading_progress(callback: PyObject) -> qiniu_sdk::http::OnProgressCallback<'static> {
     qiniu_sdk::http::OnProgressCallback::new(move |progress| {
         Python::with_gil(|py| {
-            let args = PyTuple::new(
+            callback.call1(
                 py,
-                [TransferProgressInfo {
-                    transferred_bytes: progress.transferred_bytes(),
-                    total_bytes: progress.total_bytes(),
-                }],
-            );
-            callback.call1(py, args)
+                (TransferProgressInfo::new(
+                    progress.transferred_bytes(),
+                    progress.total_bytes(),
+                ),),
+            )
         })?;
         Ok(())
     })
@@ -1170,10 +1169,7 @@ fn on_receive_response_status(
     callback: PyObject,
 ) -> qiniu_sdk::http::OnStatusCodeCallback<'static> {
     qiniu_sdk::http::OnStatusCodeCallback::new(move |status_code| {
-        Python::with_gil(|py| {
-            let args = PyTuple::new(py, [status_code.as_u16()]);
-            callback.call1(py, args)
-        })?;
+        Python::with_gil(|py| callback.call1(py, (status_code.as_u16(),)))?;
         Ok(())
     })
 }
@@ -1181,16 +1177,15 @@ fn on_receive_response_status(
 fn on_receive_response_header(callback: PyObject) -> qiniu_sdk::http::OnHeaderCallback<'static> {
     qiniu_sdk::http::OnHeaderCallback::new(move |header_name, header_value| {
         Python::with_gil(|py| {
-            let args = PyTuple::new(
+            callback.call1(
                 py,
-                [
+                (
                     header_name.as_str(),
                     header_value
                         .to_str()
                         .map_err(QiniuHeaderValueEncodingError::from_err)?,
-                ],
-            );
-            callback.call1(py, args)
+                ),
+            )
         })?;
         Ok(())
     })

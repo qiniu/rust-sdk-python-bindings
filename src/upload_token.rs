@@ -6,10 +6,7 @@ use super::{
     },
     utils::{convert_json_value_to_py_object, convert_py_any_to_json_value},
 };
-use pyo3::{
-    prelude::*,
-    types::{PyString, PyTuple},
-};
+use pyo3::prelude::*;
 use qiniu_sdk::{
     prelude::UploadTokenProviderExt,
     upload_token::{
@@ -118,14 +115,14 @@ impl UploadPolicy {
 
     /// 存储空间约束
     #[pyo3(text_signature = "($self)")]
-    fn bucket<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.bucket().map(|s| PyString::new(py, s))
+    fn bucket(&self) -> Option<&str> {
+        self.0.bucket()
     }
 
     /// 对象名称约束或对象名称前缀约束
     #[pyo3(text_signature = "($self)")]
-    fn key<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.key().map(|s| PyString::new(py, s))
+    fn key(&self) -> Option<&str> {
+        self.0.key()
     }
 
     /// 是否是对象名称前缀约束
@@ -162,52 +159,50 @@ impl UploadPolicy {
 
     /// Web 端文件上传成功后，浏览器执行 303 跳转的 URL
     #[pyo3(text_signature = "($self)")]
-    fn return_url<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.return_url().map(|s| PyString::new(py, s))
+    fn return_url(&self) -> Option<&str> {
+        self.0.return_url()
     }
 
     /// 上传成功后，自定义七牛云最终返回给上传端的数据
     #[pyo3(text_signature = "($self)")]
-    fn return_body<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.return_body().map(|s| PyString::new(py, s))
+    fn return_body(&self) -> Option<&str> {
+        self.0.return_body()
     }
 
     /// 上传成功后，七牛云向业务服务器发送 POST 请求的 URL 列表
     #[pyo3(text_signature = "($self)")]
-    fn callback_urls<'p>(&self, py: Python<'p>) -> Option<Vec<&'p PyString>> {
-        self.0
-            .callback_urls()
-            .map(|url| url.map(|s| PyString::new(py, s)).collect())
+    fn callback_urls(&self) -> Option<Vec<&str>> {
+        self.0.callback_urls().map(|url| url.collect())
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的 `Host`
     #[pyo3(text_signature = "($self)")]
-    fn callback_host<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.callback_host().map(|s| PyString::new(py, s))
+    fn callback_host(&self) -> Option<&str> {
+        self.0.callback_host()
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的内容
     ///
     /// 支持魔法变量和自定义变量
     #[pyo3(text_signature = "($self)")]
-    fn callback_body<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.callback_body().map(|s| PyString::new(py, s))
+    fn callback_body(&self) -> Option<&str> {
+        self.0.callback_body()
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的 `Content-Type`
     ///
     /// 默认为 `application/x-www-form-urlencoded`，也可设置为 `application/json`
     #[pyo3(text_signature = "($self)")]
-    fn callback_body_type<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.callback_body_type().map(|s| PyString::new(py, s))
+    fn callback_body_type(&self) -> Option<&str> {
+        self.0.callback_body_type()
     }
 
     /// 自定义对象名称
     ///
     /// 支持魔法变量和自定义变量
     #[pyo3(text_signature = "($self)")]
-    fn save_key<'p>(&self, py: Python<'p>) -> Option<&'p PyString> {
-        self.0.save_key().map(|s| PyString::new(py, s))
+    fn save_key(&self) -> Option<&str> {
+        self.0.save_key()
     }
 
     /// 是否忽略客户端指定的对象名称，强制使用自定义对象名称进行文件命名
@@ -233,10 +228,8 @@ impl UploadPolicy {
     /// 指定本字段值，七牛服务器会侦测文件内容以判断 MIME 类型，再用判断值跟指定值进行匹配，
     /// 匹配成功则允许上传，匹配失败则返回 403 状态码
     #[pyo3(text_signature = "($self)")]
-    fn mime_types<'p>(&self, py: Python<'p>) -> Option<Vec<&'p PyString>> {
-        self.0
-            .mime_types()
-            .map(|mime_type| mime_type.map(|s| PyString::new(py, s)).collect())
+    fn mime_types(&self) -> Option<Vec<&str>> {
+        self.0.mime_types().map(|mime_type| mime_type.collect())
     }
 
     /// 文件类型
@@ -270,8 +263,8 @@ impl UploadPolicy {
 
     /// 获取上传策略的字段迭代器
     #[pyo3(text_signature = "($self)")]
-    fn keys<'p>(&self, py: Python<'p>) -> Vec<&'p PyString> {
-        self.0.keys().map(|s| PyString::new(py, s)).collect()
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|key| key.as_str()).collect()
     }
 
     /// 获取上传策略的字段值的迭代器
@@ -809,7 +802,7 @@ impl BucketUploadTokenProvider {
                     builder.on_policy_generated(move |upload_policy_builder| {
                         let builder = UploadPolicyBuilder(take(upload_policy_builder));
                         let builder = Python::with_gil(|py| {
-                            obj.call1(py, PyTuple::new(py, [builder]))
+                            obj.call1(py, (builder,))
                                 .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
                         })?;
                         *upload_policy_builder = builder.0;
@@ -864,7 +857,7 @@ impl ObjectUploadTokenProvider {
                     builder.on_policy_generated(move |upload_policy_builder| {
                         let builder = UploadPolicyBuilder(take(upload_policy_builder));
                         let builder = Python::with_gil(|py| {
-                            obj.call1(py, PyTuple::new(py, [builder]))
+                            obj.call1(py, (builder,))
                                 .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
                         })?;
                         *upload_policy_builder = builder.0;

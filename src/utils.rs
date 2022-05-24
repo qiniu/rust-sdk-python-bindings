@@ -75,8 +75,7 @@ impl PythonIoBase {
 
     fn _read(&mut self, buf: &mut [u8]) -> PyResult<usize> {
         Python::with_gil(|py| {
-            let args = PyTuple::new(py, [buf.len()]);
-            let retval = self.io_base.call_method1(py, READ, args)?;
+            let retval = self.io_base.call_method1(py, READ, (buf.len(),))?;
             let bytes = extract_bytes_from_py_object(py, retval)?;
             buf[..bytes.len()].copy_from_slice(&bytes);
             Ok(bytes.len())
@@ -86,17 +85,15 @@ impl PythonIoBase {
     fn _seek(&mut self, seek_from: SeekFrom) -> PyResult<u64> {
         let (offset, whence) = split_seek_from(seek_from);
         Python::with_gil(|py| {
-            let args = PyTuple::new(py, [offset, whence]);
-            let retval = self.io_base.call_method1(py, SEEK, args)?;
+            let retval = self.io_base.call_method1(py, SEEK, (offset, whence))?;
             retval.extract::<u64>(py)
         })
     }
 
     fn _write(&mut self, buf: &[u8]) -> PyResult<usize> {
         Python::with_gil(|py| {
-            let args = PyTuple::new(py, [buf]);
             self.io_base
-                .call_method1(py, WRITE, args)?
+                .call_method1(py, WRITE, (buf,))?
                 .extract::<usize>(py)
         })
     }

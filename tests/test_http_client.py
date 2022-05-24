@@ -974,6 +974,29 @@ class TestHttpClient(unittest.IsolatedAsyncioTestCase):
 
         try:
             async with aiofiles.tempfile.TemporaryFile('wb+') as f:
+                p = None
+                s = None
+                h = {}
+
+                def uploading_progress(ctx, progress):
+                    nonlocal p
+                    p = progress
+
+                def receive_response_status(ctx, status_code):
+                    nonlocal s
+                    s = status_code
+
+                def receive_response_header(ctx, header_name, header_value):
+                    nonlocal h
+                    h[header_name] = header_value
+
+                def to_choose_ips(ctx, ips):
+                    self.assertEqual(ips, ['127.0.0.1:8089'])
+
+                def ips_chosen(ctx, before, after):
+                    self.assertEqual(before, ['127.0.0.1:8089'])
+                    self.assertEqual(after, ['127.0.0.1:8089'])
+
                 client = http_client.HttpClient()
                 await f.write(os.urandom(1 << 20))
                 await f.seek(0, io.SEEK_SET)
@@ -985,9 +1008,20 @@ class TestHttpClient(unittest.IsolatedAsyncioTestCase):
                     authorization=http_client.Authorization.v2(
                         credential.Credential('ak', 'sk')),
                     body=f,
-                    body_len=1 << 20)
+                    body_len=1 << 20,
+                    uploading_progress=uploading_progress,
+                    receive_response_status=receive_response_status,
+                    receive_response_header=receive_response_header,
+                    to_choose_ips=to_choose_ips,
+                    ips_chosen=ips_chosen)
                 self.assertEqual(resp.status_code, 200)
                 self.assertEqual(await resp.parse_json(), {})
+                self.assertEqual(p.transferred_bytes, 1 << 20)
+                self.assertEqual(p.total_bytes, 1 << 20)
+                self.assertEqual(s, 200)
+                self.assertEqual(h['content-type'],
+                                 'application/json; charset=utf-8')
+                self.assertTrue('Python/' in h['server'])
         finally:
             await runner.cleanup()
 
