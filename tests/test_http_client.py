@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider
+from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider, QiniuApiCallError
 from aiohttp import web
 import os
 import io
@@ -753,7 +753,7 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
                 'fakeak', 'fakesk'), 'fakebucket')
             await query.async_get()
             self.fail('should not be here')
-        except Exception as e:
+        except QiniuApiCallError as e:
             await chooser.async_feedback(['127.0.0.1'], error=e)
             chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
             self.assertEqual(chosen, ['127.0.0.2', '127.0.1.1'])
@@ -767,7 +767,7 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
                 'fakeak', 'fakesk'), 'fakebucket')
             await query.async_get()
             self.fail('should not be here')
-        except Exception as e:
+        except QiniuApiCallError as e:
             await chooser.async_feedback(['127.0.0.1', '127.0.0.2'], error=e)
             chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
             self.assertEqual(chosen, ['127.0.1.1'])
@@ -782,7 +782,7 @@ class TestChoose(unittest.IsolatedAsyncioTestCase):
                 'fakeak', 'fakesk'), 'fakebucket')
             await query.async_get()
             self.fail('should not be here')
-        except Exception as e:
+        except QiniuApiCallError as e:
             await chooser.async_feedback(['127.0.0.1', '127.0.0.2', '127.0.1.1'], error=e)
             chosen = await chooser.async_choose(['127.0.0.1', '127.0.0.2', '127.0.1.1'])
             self.assertEqual(len(chosen), 2)
@@ -793,12 +793,12 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
         retrier = http_client.ErrorRetrier()
         try:
             provider = http_client.BucketDomainsQueryer.in_memory(
-                uc_endpoints=http_client.Endpoints(['127.0.0.1', '127.0.0.2', '127.0.1.1']))
+                uc_endpoints=http_client.Endpoints(['127.0.0.1']))
             query = provider.query(credential.Credential(
                 'fakeak', 'fakesk'), 'fakebucket')
             await query.async_get()
             self.fail('should not be here')
-        except Exception as e:
+        except QiniuApiCallError as e:
             decision = retrier.retry(
                 http.HttpRequestParts(url='http://www.qiniu.com'), e)
             self.assertEqual(decision, http_client.RetryDecision.TryNextServer)
@@ -819,7 +819,7 @@ class TestRetrier(unittest.IsolatedAsyncioTestCase):
                 use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             query = provider.query('ak', 'bucket')
             await query.async_get()
-        except Exception as e:
+        except QiniuApiCallError as e:
             retried_stats = http_client.RetriedStatsInfo()
             retried_stats.increase_current_endpoint()
             retried_stats.increase_current_endpoint()
@@ -858,7 +858,7 @@ class TestBackoff(unittest.IsolatedAsyncioTestCase):
                 use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             query = provider.query('ak', 'bucket')
             await query.async_get()
-        except Exception as e:
+        except QiniuApiCallError as e:
             retried_stats = http_client.RetriedStatsInfo()
             retried_stats.increase_current_endpoint()
             retried_stats.increase_current_endpoint()
