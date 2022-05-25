@@ -1,3 +1,6 @@
 [submodule "rust-sdk"]
 	path = rust-sdk
 	url = https://github.com/qiniu/rust-sdk.git
+[submodule "api-specs"]
+	path = api-specs
+	url = git@github.com:qiniu/api-specs.git
