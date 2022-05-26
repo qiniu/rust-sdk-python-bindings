@@ -1,12 +1,11 @@
+mod apis;
 mod credential;
 mod etag;
-pub mod exceptions;
+mod exceptions;
 mod http;
 mod http_client;
 mod upload_token;
 mod utils;
-
-pub use exceptions::QiniuApiCallError;
 
 use exceptions::QiniuUserAgentInitializeError;
 use pyo3::prelude::*;
@@ -23,6 +22,7 @@ fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_submodule(upload_token::create_module(py)?)?;
     m.add_submodule(http::create_module(py)?)?;
     m.add_submodule(http_client::create_module(py)?)?;
+    m.add_submodule(apis::create_module(py)?)?;
 
     return Ok(());
 

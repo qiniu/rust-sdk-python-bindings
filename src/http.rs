@@ -955,7 +955,7 @@ impl SyncHttpResponse {
         metrics = "None"
     )]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(super) fn new(
         status_code: Option<u16>,
         headers: Option<HashMap<String, String>>,
         version: Option<Version>,
@@ -994,7 +994,7 @@ impl SyncHttpResponse {
     /// 读取响应体数据
     #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
-    pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
         let mut buf = Vec::new();
         if let Ok(size) = u64::try_from(size) {
             buf.reserve(size as usize);
@@ -1008,19 +1008,19 @@ impl SyncHttpResponse {
 
     /// 读取所有响应体数据
     #[pyo3(text_signature = "($self)")]
-    pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
         self.read(-1, py)
     }
 
     #[pyo3(text_signature = "($self, b)")]
-    pub fn write(&mut self, b: PyObject) -> PyResult<u64> {
+    fn write(&mut self, b: PyObject) -> PyResult<u64> {
         drop(b);
         Err(PyNotImplementedError::new_err("write"))
     }
 
     /// 解析 JSON 响应体
     #[pyo3(text_signature = "($self)")]
-    pub fn parse_json(&mut self) -> PyResult<PyObject> {
+    pub(super) fn parse_json(&mut self) -> PyResult<PyObject> {
         let value: serde_json::Value =
             serde_json::from_reader(&mut self.0).map_err(QiniuJsonError::from_err)?;
         convert_json_value_to_py_object(&value)
@@ -1042,6 +1042,7 @@ impl From<qiniu_sdk::http::SyncResponseBody> for SyncHttpResponse {
 #[pyo3(
     text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
 )]
+#[derive(Clone)]
 pub(super) struct AsyncHttpResponse(Arc<AsyncMutex<qiniu_sdk::http::AsyncResponseBody>>);
 
 #[pymethods]
@@ -1057,7 +1058,7 @@ impl AsyncHttpResponse {
         metrics = "None"
     )]
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(super) fn new(
         status_code: Option<u16>,
         headers: Option<HashMap<String, String>>,
         version: Option<Version>,
@@ -1096,7 +1097,7 @@ impl AsyncHttpResponse {
     /// 异步读取响应体数据
     #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
-    pub fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
         let reader = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let mut reader = reader.lock().await;
@@ -1114,31 +1115,35 @@ impl AsyncHttpResponse {
 
     /// 异步所有读取响应体数据
     #[pyo3(text_signature = "($self)")]
-    pub fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
         self.read(-1, py)
     }
 
     #[pyo3(text_signature = "($self, b)")]
-    pub fn write(&mut self, b: PyObject) -> PyResult<u64> {
+    fn write(&mut self, b: PyObject) -> PyResult<u64> {
         drop(b);
         Err(PyNotImplementedError::new_err("write"))
     }
 
     /// 异步解析 JSON 响应体
     #[pyo3(text_signature = "($self)")]
-    pub fn parse_json<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
-        let reader = self.0.to_owned();
-        pyo3_asyncio::async_std::future_into_py(py, async move {
-            let mut reader = reader.lock().await;
-            let mut buf = Vec::new();
-            reader
-                .read_to_end(&mut buf)
-                .await
-                .map_err(PyIOError::new_err)?;
-            let value: serde_json::Value =
-                serde_json::from_slice(&buf).map_err(QiniuJsonError::from_err)?;
-            convert_json_value_to_py_object(&value)
-        })
+    fn parse_json<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let mut resp = self.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move { resp._parse_json().await })
+    }
+}
+
+impl AsyncHttpResponse {
+    pub(super) async fn _parse_json(&mut self) -> PyResult<PyObject> {
+        let mut reader = self.0.lock().await;
+        let mut buf = Vec::new();
+        reader
+            .read_to_end(&mut buf)
+            .await
+            .map_err(PyIOError::new_err)?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&buf).map_err(QiniuJsonError::from_err)?;
+        convert_json_value_to_py_object(&value)
     }
 }
 

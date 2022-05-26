@@ -190,7 +190,7 @@ impl From<Endpoint> for qiniu_sdk::http_client::Endpoint {
 
 #[pyclass]
 #[derive(Clone, Copy)]
-pub(super) enum ServiceName {
+pub(crate) enum ServiceName {
     /// 上传服务
     Up = 0,
 
@@ -248,7 +248,7 @@ impl From<qiniu_sdk::http_client::ServiceName> for ServiceName {
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions_provider)")]
-pub(super) struct EndpointsProvider(Box<dyn qiniu_sdk::http_client::EndpointsProvider>);
+pub(crate) struct EndpointsProvider(Box<dyn qiniu_sdk::http_client::EndpointsProvider>);
 
 #[pymethods]
 impl EndpointsProvider {
@@ -400,9 +400,9 @@ impl Endpoints {
 ///
 /// 同时提供阻塞获取接口和异步获取接口，异步获取接口则需要启用 `async` 功能
 #[pyclass(subclass)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions)")]
-struct RegionsProvider(Box<dyn qiniu_sdk::http_client::RegionsProvider>);
+pub(super) struct RegionsProvider(Box<dyn qiniu_sdk::http_client::RegionsProvider>);
 
 #[pymethods]
 impl RegionsProvider {
@@ -474,6 +474,36 @@ impl RegionsProvider {
 
     fn __str__(&self) -> String {
         self.__repr__()
+    }
+}
+
+impl qiniu_sdk::http_client::RegionsProvider for RegionsProvider {
+    fn get(
+        &self,
+        opts: qiniu_sdk::http_client::RegionsGetOptions,
+    ) -> qiniu_sdk::http_client::ApiResult<qiniu_sdk::http_client::GotRegion> {
+        self.0.get(opts)
+    }
+
+    fn get_all(
+        &self,
+        opts: qiniu_sdk::http_client::RegionsGetOptions,
+    ) -> qiniu_sdk::http_client::ApiResult<qiniu_sdk::http_client::GotRegions> {
+        self.0.get_all(opts)
+    }
+
+    fn async_get(
+        &self,
+        opts: qiniu_sdk::http_client::RegionsGetOptions,
+    ) -> BoxFuture<'_, qiniu_sdk::http_client::ApiResult<qiniu_sdk::http_client::GotRegion>> {
+        self.0.async_get(opts)
+    }
+
+    fn async_get_all(
+        &self,
+        opts: qiniu_sdk::http_client::RegionsGetOptions,
+    ) -> BoxFuture<'_, qiniu_sdk::http_client::ApiResult<qiniu_sdk::http_client::GotRegions>> {
+        self.0.async_get_all(opts)
     }
 }
 

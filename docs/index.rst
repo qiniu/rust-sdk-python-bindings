@@ -7,21 +7,31 @@
 
 .. automodule:: qiniu_sdk_bindings.etag
    :members:
+   :show-inheritance:
 
 .. automodule:: qiniu_sdk_bindings.credential
    :members:
+   :show-inheritance:
 
 .. automodule:: qiniu_sdk_bindings.upload_token
    :members:
+   :show-inheritance:
 
 .. automodule:: qiniu_sdk_bindings.http
    :members:
+   :show-inheritance:
 
 .. automodule:: qiniu_sdk_bindings.http_client
    :members:
+   :show-inheritance:
+
+.. automodule:: qiniu_sdk_bindings.apis
+   :members:
+   :show-inheritance:
 
 .. automodule:: qiniu_sdk_bindings
    :members:
+   :show-inheritance:
 
 .. toctree::
    :maxdepth: 2
