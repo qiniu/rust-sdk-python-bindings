@@ -1,4 +1,4 @@
-use super::region::{EndpointsProvider, RegionsProvider, ServiceName};
+use super::region::ServiceName;
 use crate::{
     credential::CredentialProvider,
     exceptions::{
@@ -14,9 +14,9 @@ use crate::{
     upload_token::UploadTokenProvider,
     utils::{
         convert_headers_to_hashmap, convert_py_any_to_json_value, extract_async_multipart,
-        extract_ip_addrs_with_port, extract_sync_multipart, parse_domain_with_port, parse_headers,
-        parse_ip_addr_with_port, parse_ip_addrs, parse_method, parse_mime, parse_query_pairs,
-        PythonIoBase,
+        extract_endpoints_provider, extract_ip_addrs_with_port, extract_sync_multipart,
+        parse_domain_with_port, parse_headers, parse_ip_addr_with_port, parse_ip_addrs,
+        parse_method, parse_mime, parse_query_pairs, PythonIoBase,
     },
 };
 use anyhow::Result as AnyResult;
@@ -1763,17 +1763,11 @@ impl HttpClient {
             .into_iter()
             .map(qiniu_sdk::http_client::ServiceName::from)
             .collect::<Vec<_>>();
-        let endpoints = if let Ok(regions) = endpoints.extract::<RegionsProvider>(py) {
-            Box::new(qiniu_sdk::http_client::RegionsProviderEndpoints::new(
-                regions,
-            )) as Box<dyn qiniu_sdk::http_client::EndpointsProvider>
-        } else {
-            let endpoints = endpoints.extract::<EndpointsProvider>(py)?;
-            Box::new(endpoints) as Box<dyn qiniu_sdk::http_client::EndpointsProvider>
-        };
-        let mut builder = self
-            .0
-            .new_request(parse_method(&method)?, &service_names, endpoints);
+        let mut builder = self.0.new_request(
+            parse_method(&method)?,
+            &service_names,
+            extract_endpoints_provider(endpoints.as_ref(py))?,
+        );
         Self::set_request_builder(
             &mut builder,
             use_https,
@@ -1877,21 +1871,11 @@ impl HttpClient {
             .into_iter()
             .map(qiniu_sdk::http_client::ServiceName::from)
             .collect::<Vec<_>>();
-        let endpoints = Python::with_gil(
-            |py| -> PyResult<Box<dyn qiniu_sdk::http_client::EndpointsProvider>> {
-                if let Ok(regions) = endpoints.extract::<RegionsProvider>(py) {
-                    Ok(Box::new(
-                        qiniu_sdk::http_client::RegionsProviderEndpoints::new(regions),
-                    ))
-                } else {
-                    let endpoints = endpoints.extract::<EndpointsProvider>(py)?;
-                    Ok(Box::new(endpoints))
-                }
-            },
-        )?;
-        let mut builder =
-            self.0
-                .new_async_request(parse_method(&method)?, &service_names, endpoints);
+        let mut builder = self.0.new_async_request(
+            parse_method(&method)?,
+            &service_names,
+            Python::with_gil(|py| extract_endpoints_provider(endpoints.as_ref(py)))?,
+        );
         Self::set_request_builder(
             &mut builder,
             use_https,

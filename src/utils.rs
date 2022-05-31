@@ -6,7 +6,7 @@ use super::{
         QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
         QiniuMimeParseError, QiniuUnsupportedTypeError,
     },
-    http_client::Endpoint,
+    http_client::{Endpoint, EndpointsProvider, RegionsProvider},
 };
 use futures::{
     channel::{
@@ -691,6 +691,19 @@ pub(super) fn extract_endpoint(endpoint: &PyAny) -> PyResult<qiniu_sdk::http_cli
             .map_err(QiniuInvalidEndpointError::from_err)
     } else {
         Ok(endpoint.extract::<Endpoint>()?.into())
+    }
+}
+
+pub(super) fn extract_endpoints_provider(
+    provider: &PyAny,
+) -> PyResult<Box<dyn qiniu_sdk::http_client::EndpointsProvider>> {
+    if let Ok(regions) = provider.extract::<RegionsProvider>() {
+        Ok(Box::new(
+            qiniu_sdk::http_client::RegionsProviderEndpoints::new(regions),
+        ))
+    } else {
+        let endpoints = provider.extract::<EndpointsProvider>()?;
+        Ok(Box::new(endpoints))
     }
 }
 

@@ -402,7 +402,7 @@ impl Endpoints {
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions)")]
-pub(super) struct RegionsProvider(Box<dyn qiniu_sdk::http_client::RegionsProvider>);
+pub(crate) struct RegionsProvider(Box<dyn qiniu_sdk::http_client::RegionsProvider>);
 
 #[pymethods]
 impl RegionsProvider {
