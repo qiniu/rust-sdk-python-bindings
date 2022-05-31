@@ -25,9 +25,7 @@
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk_bindings.apis
-   :members:
-   :show-inheritance:
+.. include:: ../src/apis/index.rst
 
 .. automodule:: qiniu_sdk_bindings
    :members:

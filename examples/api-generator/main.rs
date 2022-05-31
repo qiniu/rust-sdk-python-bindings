@@ -53,9 +53,7 @@ fn generate_python_modules() -> AnyResult<()> {
         }
     }
     mods.write_to_python_mod("apis", &apis_generated_dir)?;
-    // run_cargo_fmt(&apis_cargo_toml_path)?;
-    // run_make_build(&apis_dir)?;
-    // run_make_clippy(&apis_dir)?;
+    mods.write_sphinx_index("apis", &apis_generated_dir)?;
 
     return Ok(());
 

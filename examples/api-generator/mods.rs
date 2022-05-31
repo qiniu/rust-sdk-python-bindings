@@ -2,8 +2,8 @@ use quote::{format_ident, quote};
 use std::{
     collections::{BTreeMap, VecDeque},
     ffi::OsString,
-    fs::{create_dir_all, write},
-    io::Result as IoResult,
+    fs::{create_dir_all, write, OpenOptions},
+    io::{BufWriter, Result as IoResult, Write},
     path::Path,
 };
 
@@ -54,6 +54,7 @@ impl Mods {
                 let mod_name = format_ident!("r#{}", mod_name.to_str().unwrap());
                 mods.push(mod_name);
             }
+
             let mods_declarations_token_stream = mods
                 .iter()
                 .map(|mod_name| quote! {mod #mod_name;})
@@ -86,6 +87,91 @@ impl Mods {
                     + &token_streams.to_string();
             write(mod_file_path, auto_generated_code.as_bytes())?;
             Ok(())
+        }
+    }
+
+    pub(super) fn write_sphinx_index(&self, mod_name: &str, src_dir_path: &Path) -> IoResult<()> {
+        return write_sphinx_index(src_dir_path, mod_name, &["qiniu_sdk_bindings"], &self.root);
+
+        fn write_sphinx_index(
+            dir_path: &Path,
+            mod_name: &str,
+            module_path_segments: &[&str],
+            tree: &Tree,
+        ) -> IoResult<()> {
+            let index_file_path = dir_path.join("index.rst");
+            let new_module_path_segments = {
+                let mut module_path_segments = module_path_segments.to_owned();
+                module_path_segments.push(mod_name);
+                module_path_segments
+            };
+            let mut mods = Vec::new();
+            for (mod_name, item) in tree.iter() {
+                if let DirOrFile::Dir(subtree) = item {
+                    let mod_dir_path = dir_path.join(mod_name);
+                    write_sphinx_index(
+                        &mod_dir_path,
+                        mod_name.to_str().unwrap(),
+                        &new_module_path_segments,
+                        subtree,
+                    )?;
+                }
+                let mut segments = new_module_path_segments.to_owned();
+                segments.push(mod_name.to_str().unwrap());
+                mods.push((segments, matches!(item, DirOrFile::Dir(_))));
+            }
+            return write_to_index_rst(&index_file_path, &mods);
+
+            fn write_to_index_rst<M: AsRef<str>>(
+                path: impl AsRef<Path>,
+                mods: &[(Vec<M>, bool)],
+            ) -> IoResult<()> {
+                let mut file = BufWriter::new(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(path)?,
+                );
+                for (full_module_segments, _) in mods {
+                    let full_segments = full_module_segments
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>();
+                    write_one_mod_to_index_rst(&mut file, full_segments.join("."))?;
+                }
+                for (full_module_segments, is_dir) in mods {
+                    if *is_dir {
+                        let full_segments = full_module_segments
+                            .iter()
+                            .skip(1)
+                            .map(|s| s.as_ref())
+                            .collect::<Vec<_>>();
+                        write_dir_include_to_index_rst(&mut file, full_segments.join("/"))?;
+                    }
+                }
+                file.flush()
+            }
+
+            fn write_one_mod_to_index_rst(
+                file: &mut dyn Write,
+                module: impl AsRef<str>,
+            ) -> IoResult<()> {
+                writeln!(file, ".. automodule:: {}", module.as_ref())?;
+                writeln!(file, "  :members:")?;
+                writeln!(file, "  :show-inheritance:")?;
+                writeln!(file, "  :noindex:")?;
+                writeln!(file)?;
+                Ok(())
+            }
+
+            fn write_dir_include_to_index_rst(
+                file: &mut dyn Write,
+                dir: impl AsRef<str>,
+            ) -> IoResult<()> {
+                writeln!(file, ".. include:: ../src/{}/index.rst", dir.as_ref())?;
+                Ok(())
+            }
         }
     }
 }
