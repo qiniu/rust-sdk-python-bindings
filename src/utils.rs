@@ -443,12 +443,8 @@ pub(super) fn parse_headers(headers: HashMap<String, String>) -> PyResult<Header
     headers
         .into_iter()
         .map(|(name, value)| {
-            let name = name
-                .parse::<HeaderName>()
-                .map_err(QiniuInvalidHeaderNameError::from_err)?;
-            let value = value
-                .parse::<HeaderValue>()
-                .map_err(QiniuInvalidHeaderValueError::from_err)?;
+            let name = parse_header_name(&name)?;
+            let value = parse_header_value(&value)?;
             Ok((name, value))
         })
         .collect()
@@ -466,15 +462,16 @@ pub(super) fn convert_headers_to_hashmap(headers: &HeaderMap) -> PyResult<HashMa
         .map_err(QiniuHeaderValueEncodingError::from_err)
 }
 
-pub(super) fn parse_header_value(header_value: Option<&str>) -> PyResult<Option<HeaderValue>> {
-    if let Some(header_value) = header_value {
-        let header_value = header_value
-            .parse::<HeaderValue>()
-            .map_err(QiniuInvalidHeaderValueError::from_err)?;
-        Ok(Some(header_value))
-    } else {
-        Ok(None)
-    }
+pub(super) fn parse_header_name(header_name: &str) -> PyResult<HeaderName> {
+    header_name
+        .parse::<HeaderName>()
+        .map_err(QiniuInvalidHeaderNameError::from_err)
+}
+
+pub(super) fn parse_header_value(header_value: &str) -> PyResult<HeaderValue> {
+    header_value
+        .parse::<HeaderValue>()
+        .map_err(QiniuInvalidHeaderValueError::from_err)
 }
 
 pub(super) fn parse_ip_addrs(ip_addrs: Vec<String>) -> PyResult<Vec<IpAddr>> {

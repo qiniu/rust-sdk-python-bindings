@@ -352,7 +352,7 @@ impl EndpointsProvider {
 #[pyclass(extends = EndpointsProvider)]
 #[pyo3(text_signature = "(preferred_endpoints, alternative_endpoints = None)")]
 #[derive(Clone)]
-struct Endpoints(qiniu_sdk::http_client::Endpoints);
+pub(crate) struct Endpoints(qiniu_sdk::http_client::Endpoints);
 
 #[pymethods]
 impl Endpoints {
@@ -391,6 +391,18 @@ impl Endpoints {
             CompareOp::Eq => (self.0 == other.0).to_object(py),
             _ => py.NotImplemented(),
         }
+    }
+}
+
+impl From<Endpoints> for qiniu_sdk::http_client::Endpoints {
+    fn from(endpoints: Endpoints) -> Self {
+        endpoints.0
+    }
+}
+
+impl From<qiniu_sdk::http_client::Endpoints> for Endpoints {
+    fn from(endpoints: qiniu_sdk::http_client::Endpoints) -> Self {
+        Self(endpoints)
     }
 }
 
@@ -911,7 +923,7 @@ impl AllRegionsProvider {
     text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
 )]
 #[derive(Clone)]
-struct BucketRegionsQueryer(qiniu_sdk::http_client::BucketRegionsQueryer);
+pub(crate) struct BucketRegionsQueryer(qiniu_sdk::http_client::BucketRegionsQueryer);
 
 #[pymethods]
 impl BucketRegionsQueryer {
@@ -1026,6 +1038,18 @@ impl BucketRegionsQueryer {
             builder.shrink_interval(Duration::from_secs(shrink_interval_secs));
         }
         builder
+    }
+}
+
+impl From<BucketRegionsQueryer> for qiniu_sdk::http_client::BucketRegionsQueryer {
+    fn from(queryer: BucketRegionsQueryer) -> Self {
+        queryer.0
+    }
+}
+
+impl From<qiniu_sdk::http_client::BucketRegionsQueryer> for BucketRegionsQueryer {
+    fn from(queryer: qiniu_sdk::http_client::BucketRegionsQueryer) -> Self {
+        Self(queryer)
     }
 }
 

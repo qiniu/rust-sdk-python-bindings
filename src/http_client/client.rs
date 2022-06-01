@@ -15,8 +15,9 @@ use crate::{
     utils::{
         convert_headers_to_hashmap, convert_py_any_to_json_value, extract_async_multipart,
         extract_endpoints_provider, extract_ip_addrs_with_port, extract_sync_multipart,
-        parse_domain_with_port, parse_headers, parse_ip_addr_with_port, parse_ip_addrs,
-        parse_method, parse_mime, parse_query_pairs, PythonIoBase,
+        parse_domain_with_port, parse_header_name, parse_header_value, parse_headers,
+        parse_ip_addr_with_port, parse_ip_addrs, parse_method, parse_mime, parse_query_pairs,
+        PythonIoBase,
     },
 };
 use anyhow::Result as AnyResult;
@@ -65,12 +66,6 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 #[pyclass]
 #[derive(Clone)]
 pub(crate) struct Authorization(qiniu_sdk::http_client::Authorization<'static>);
-
-impl From<qiniu_sdk::http_client::Authorization<'static>> for Authorization {
-    fn from(authorization: qiniu_sdk::http_client::Authorization<'static>) -> Self {
-        Self(authorization)
-    }
-}
 
 #[pymethods]
 impl Authorization {
@@ -135,6 +130,18 @@ impl Authorization {
 
     fn __str__(&self) -> String {
         self.__repr__()
+    }
+}
+
+impl From<qiniu_sdk::http_client::Authorization<'static>> for Authorization {
+    fn from(authorization: qiniu_sdk::http_client::Authorization<'static>) -> Self {
+        Self(authorization)
+    }
+}
+
+impl From<Authorization> for qiniu_sdk::http_client::Authorization<'static> {
+    fn from(authorization: Authorization) -> Self {
+        authorization.0
     }
 }
 
@@ -2052,6 +2059,18 @@ impl HttpClient {
     }
 }
 
+impl From<HttpClient> for qiniu_sdk::http_client::HttpClient {
+    fn from(client: HttpClient) -> Self {
+        client.0
+    }
+}
+
+impl From<qiniu_sdk::http_client::HttpClient> for HttpClient {
+    fn from(client: qiniu_sdk::http_client::HttpClient) -> Self {
+        Self(client)
+    }
+}
+
 macro_rules! impl_callback_context {
     ($name:ident) => {
         #[pymethods]
@@ -2128,6 +2147,8 @@ macro_rules! impl_callback_context {
 /// 简化回调函数上下文
 ///
 /// 用于在回调函数中获取请求相关信息，如请求路径、请求方法、查询参数、请求头等。
+///
+/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 #[derive(Clone)]
 struct SimplifiedCallbackContext(&'static dyn qiniu_sdk::http_client::SimplifiedCallbackContext);
@@ -2217,6 +2238,8 @@ fn on_receive_response_header(
 /// 回调函数上下文
 ///
 /// 基于简化回调函数上下文，并在此基础上增加获取扩展信息的引用和可变引用的方法。
+///
+/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct CallbackContext(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
 
@@ -2301,6 +2324,8 @@ fn on_ips_chosen(
 /// 扩展的回调函数上下文
 ///
 /// 基于回调函数上下文，并在此基础上增加返回部分请求信息的可变引用，以及 UserAgent 和经过解析的 IP 地址列表的获取和设置方法。
+///
+/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct ExtendedCallbackContext(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
 
@@ -2421,7 +2446,195 @@ fn on_backoff(
         Ok(())
     }
 }
-// JSON API 响应
+
+/// HTTP 请求构建器部分参数
+///
+/// 包含 HTTP 请求构建器内除请求体和终端地址提供者以外的参数
+///
+/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+#[pyclass]
+pub(crate) struct RequestBuilderParts(
+    &'static mut qiniu_sdk::http_client::RequestBuilderParts<'static>,
+);
+
+impl RequestBuilderParts {
+    pub(crate) fn new(ctx: &mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(ctx) })
+    }
+}
+
+#[pymethods]
+impl RequestBuilderParts {
+    /// 设置是否使用 HTTPS
+    #[setter]
+    fn set_use_https(&mut self, use_https: bool) {
+        self.0.use_https(use_https);
+    }
+
+    /// 设置 HTTP 协议版本
+    #[setter]
+    fn set_version(&mut self, version: Version) {
+        self.0.version(version.into());
+    }
+
+    /// 设置 HTTP 请求路径
+    #[setter]
+    fn set_path(&mut self, path: String) {
+        self.0.path(path);
+    }
+
+    /// 设置 HTTP 请求头
+    #[setter]
+    fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
+        self.0.headers(Cow::Owned(parse_headers(headers)?));
+        Ok(())
+    }
+
+    /// 添加 HTTP 请求头
+    #[pyo3(text_signature = "($self, header_name, header_value)")]
+    fn set_header(&mut self, header_name: &str, header_value: &str) -> PyResult<()> {
+        self.0.set_header(
+            parse_header_name(header_name)?,
+            parse_header_value(header_value)?,
+        );
+        Ok(())
+    }
+
+    /// 设置 HTTP 响应预期为 JSON 类型
+    #[pyo3(text_signature = "($self)")]
+    fn accept_json(&mut self) {
+        self.0.accept_json();
+    }
+
+    /// 设置 HTTP 响应预期为二进制流类型
+    #[pyo3(text_signature = "($self)")]
+    fn accept_application_octet_stream(&mut self) {
+        self.0.accept_application_octet_stream();
+    }
+
+    /// 设置查询参数
+    #[setter]
+    fn set_query(&mut self, query: String) {
+        self.0.query(query);
+    }
+
+    /// 设置查询参数
+    #[setter]
+    fn set_query_pairs(&mut self, query_pairs: PyObject) -> PyResult<()> {
+        self.0.query_pairs(parse_query_pairs(query_pairs)?);
+        Ok(())
+    }
+
+    /// 追加查询参数
+    #[pyo3(text_signature = "($self, query_pair_key, query_pair_value)")]
+    fn append_query_pair(&mut self, query_pair_key: String, query_pair_value: String) {
+        self.0.append_query_pair(query_pair_key, query_pair_value);
+    }
+
+    /// 追加 UserAgent
+    #[pyo3(text_signature = "($self, user_agent)")]
+    fn set_appended_user_agent(&mut self, user_agent: String) {
+        self.0.appended_user_agent(user_agent);
+    }
+
+    /// 设置鉴权签名
+    #[setter]
+    fn set_authorization(&mut self, authorization: Authorization) {
+        self.0.authorization(authorization.into());
+    }
+
+    /// 设置为幂等请求
+    #[setter]
+    fn set_idempotent(&mut self, idempotent: Idempotent) {
+        self.0.idempotent(idempotent.into());
+    }
+
+    /// 设置上传进度回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_uploading_progress(&mut self, callback: PyObject) {
+        self.0
+            .on_uploading_progress(on_uploading_progress(callback));
+    }
+
+    /// 设置响应状态码回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_receive_response_status(&mut self, callback: PyObject) {
+        self.0
+            .on_receive_response_status(on_receive_response_status(callback));
+    }
+
+    /// 设置响应 HTTP 头回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_receive_response_header(&mut self, callback: PyObject) {
+        self.0
+            .on_receive_response_header(on_receive_response_header(callback));
+    }
+
+    /// 设置域名解析前回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_to_resolve_domain(&mut self, callback: PyObject) {
+        self.0.on_to_resolve_domain(on_to_resolve_domain(callback));
+    }
+
+    /// 设置域名解析成功回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_domain_resolved(&mut self, callback: PyObject) {
+        self.0.on_domain_resolved(on_domain_resolved(callback));
+    }
+
+    /// 设置 IP 地址选择前回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_to_choose_ips(&mut self, callback: PyObject) {
+        self.0.on_to_choose_ips(on_to_choose_ips(callback));
+    }
+
+    /// 设置 IP 地址选择成功回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_ips_chosen(&mut self, callback: PyObject) {
+        self.0.on_ips_chosen(on_ips_chosen(callback));
+    }
+
+    /// 设置 HTTP 请求签名前回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_before_request_signed(&mut self, callback: PyObject) {
+        self.0.on_before_request_signed(on_request_signed(callback));
+    }
+
+    /// 设置 HTTP 请求前回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_after_request_signed(&mut self, callback: PyObject) {
+        self.0.on_after_request_signed(on_request_signed(callback));
+    }
+
+    /// 设置响应成功回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_response(&mut self, callback: PyObject) {
+        self.0.on_response(on_response(callback));
+    }
+
+    /// 设置退避前回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_before_backoff(&mut self, callback: PyObject) {
+        self.0.on_before_backoff(on_backoff(callback));
+    }
+
+    /// 设置退避后回调函数
+    #[pyo3(text_signature = "($self, callback)")]
+    fn on_after_backoff(&mut self, callback: PyObject) {
+        self.0.on_after_backoff(on_backoff(callback));
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// JSON API 响应
 ///
 /// 封装 JSON API 响应相关字段
 #[pyclass(extends = HttpResponseParts)]
@@ -2429,6 +2642,12 @@ pub(crate) struct JsonResponse(PyObject);
 
 #[pymethods]
 impl JsonResponse {
+    /// 获得 JSON 响应体
+    #[getter]
+    fn get_body<'p>(&'p self, py: Python<'p>) -> &'p PyAny {
+        self.0.as_ref(py)
+    }
+
     fn __len__(&self, py: Python<'_>) -> PyResult<usize> {
         self.0.as_ref(py).len()
     }

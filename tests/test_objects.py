@@ -1,0 +1,144 @@
+from qiniu_sdk_bindings import objects, credential, http_client
+from aiohttp import web
+import unittest
+import base64
+
+
+class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
+    async def test_objects_operation(self):
+        case = self
+
+        async def query(self):
+            return web.json_response(regions_info(), headers={'X-ReqId': 'fakereqid'})
+
+        async def stat(self):
+            case.assertEqual(
+                bytes(self.match_info['entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            return web.json_response({"fsize": 1024, "hash": 'fakehash'}, headers={'X-ReqId': 'fakereqid'})
+
+        async def copy(self):
+            case.assertEqual(
+                bytes(self.match_info['from_entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            case.assertEqual(
+                bytes(self.match_info['to_entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket2:fakekey2'))
+            case.assertEqual(
+                self.match_info['force'],
+                'false')
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        async def move(self):
+            case.assertEqual(
+                bytes(self.match_info['from_entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            case.assertEqual(
+                bytes(self.match_info['to_entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket2:fakekey2'))
+            case.assertEqual(
+                self.match_info['force'],
+                'true')
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        async def delete(self):
+            case.assertEqual(
+                bytes(self.match_info['entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        async def restoreAr(self):
+            case.assertEqual(
+                bytes(self.match_info['entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            case.assertEqual(self.match_info['afterDays'], '7')
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        async def chtype(self):
+            case.assertEqual(
+                bytes(self.match_info['entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            case.assertEqual(self.match_info['type'], '1')
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        async def chstatus(self):
+            case.assertEqual(
+                bytes(self.match_info['entry'], 'utf-8'),
+                base64.urlsafe_b64encode(b'fakebucket:fakekey'))
+            case.assertEqual(self.match_info['status'], '1')
+            return web.json_response({}, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/stat/{entry}', stat)])
+        app.add_routes(
+            [web.post('/copy/{from_entry}/{to_entry}/force/{force}', copy)])
+        app.add_routes(
+            [web.post('/move/{from_entry}/{to_entry}/force/{force}', move)])
+        app.add_routes([web.post('/delete/{entry}', delete)])
+        app.add_routes(
+            [web.post('/restoreAr/{entry}/freezeAfterDays/{afterDays}', restoreAr)])
+        app.add_routes(
+            [web.post('/chtype/{entry}/type/{type}', chtype)])
+        app.add_routes(
+            [web.post('/chstatus/{entry}/status/{status}', chstatus)])
+        app.add_routes([web.get('/v4/query', query)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            objects_manager = objects.ObjectsManager(credential.Credential(
+                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            bucket = objects_manager.bucket('fakebucket')
+            self.assertEqual(bucket.name, 'fakebucket')
+            resp = await bucket.stat_object('fakekey').async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body['fsize'], 1024)
+            self.assertEqual(resp.body['hash'], 'fakehash')
+            resp = await bucket.copy_object_to('fakekey', 'fakebucket2', 'fakekey2').async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+            resp = await bucket.move_object_to('fakekey', 'fakebucket2', 'fakekey2', force=True).async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+            resp = await bucket.delete_object('fakekey').async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+            resp = await bucket.restore_archived_object('fakekey', 7).async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+            resp = await bucket.set_object_type('fakekey', 1).async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+            resp = await bucket.modify_object_status('fakekey', True).async_call()
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.body, {})
+        finally:
+            await runner.cleanup()
+
+
+def regions_info():
+    return {
+        "hosts": [
+            {
+                "region": "z0",
+                "ttl": 5,
+                "up": {"domains": []},
+                "io": {"domains": []},
+                "rsf": {"domains": []},
+                "api": {"domains": []},
+                "s3": {"domains": []},
+                "uc": {
+                    "domains": [
+                        "127.0.0.1:8089"
+                    ]
+                },
+                "rs": {
+                    "domains": [
+                        "127.0.0.1:8089"
+                    ]
+                },
+            },
+        ]
+    }

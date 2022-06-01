@@ -125,7 +125,7 @@ impl Credential {
     ) -> PyResult<String> {
         let super_ = self_.as_ref();
         let url = parse_uri(url)?;
-        let content_type = parse_header_value(content_type)?;
+        let content_type = content_type.map(parse_header_value).transpose()?;
         Ok(super_
             .0
             .get(Default::default())?
@@ -142,7 +142,7 @@ impl Credential {
     ) -> PyResult<String> {
         let super_ = self_.as_ref();
         let url = parse_uri(url)?;
-        let content_type = parse_header_value(content_type)?;
+        let content_type = content_type.map(parse_header_value).transpose()?;
         let auth = super_
             .0
             .get(Default::default())?
@@ -165,7 +165,7 @@ impl Credential {
     ) -> PyResult<&'p PyAny> {
         let super_ = self_.as_ref();
         let url = parse_uri(url)?;
-        let content_type = parse_header_value(content_type)?;
+        let content_type = content_type.map(parse_header_value).transpose()?;
         let credential = super_.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
             let auth = credential
