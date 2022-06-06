@@ -4,7 +4,11 @@
 # You can set these variables from the command line, and also
 # from the environment for the first two.
 SPHINXOPTS    ?=
+ifeq ($(OS),Windows_NT)
+SPHINXBUILD   ?= ../.env/Scripts/sphinx-build.exe
+else
 SPHINXBUILD   ?= ../.env/bin/sphinx-build
+endif
 SOURCEDIR     = .
 BUILDDIR      = _build
 
