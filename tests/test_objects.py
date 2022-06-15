@@ -2,10 +2,11 @@ from qiniu_sdk_bindings import objects, credential, http_client
 from aiohttp import web
 import unittest
 import base64
+import time
 
 
 class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
-    async def test_objects_operation(self):
+    async def test_object_operation(self):
         case = self
 
         async def query(self):
@@ -117,6 +118,73 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
         finally:
             await runner.cleanup()
 
+    async def test_objects_list(self):
+        case = self
+
+        async def query(self):
+            return web.json_response(regions_info(), headers={'X-ReqId': 'fakereqid'})
+
+        async def list(self):
+            case.assertEqual(self.query.get('bucket'), 'fakebucket')
+            case.assertEqual(self.query.get('limit'), '1000')
+            if self.query.get('marker') == 'fakemarker':
+                return web.json_response({
+                    "marker": "",
+                    "items": [{
+                        "key": "fakeobj3",
+                        "put_time": generate_put_time(),
+                        "hash": "fakeobj3hash",
+                        "fsize": 3,
+                        "mime_type": "text/plain",
+                    }, {
+                        "key": "fakeobj4",
+                        "put_time": generate_put_time(),
+                        "hash": "fakeobj4hash",
+                        "fsize": 4,
+                        "mime_type": "text/plain",
+                    }]
+                }, headers={'X-ReqId': 'fakereqid'})
+            else:
+                return web.json_response({
+                    "marker": "fakemarker",
+                    "items": [{
+                        "key": "fakeobj1",
+                        "put_time": generate_put_time(),
+                        "hash": "fakeobj1hash",
+                        "fsize": 1,
+                        "mime_type": "text/plain",
+                    }, {
+                        "key": "fakeobj2",
+                        "put_time": generate_put_time(),
+                        "hash": "fakeobj2hash",
+                        "fsize": 2,
+                        "mime_type": "text/plain",
+                    }]
+                }, headers={'X-ReqId': 'fakereqid'})
+
+        def generate_put_time():
+            return int(time.time_ns()/100)
+
+        app = web.Application()
+        app.add_routes([web.get('/v4/query', query)])
+        app.add_routes([web.get('/list', list)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            objects_manager = objects.ObjectsManager(credential.Credential(
+                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            bucket = objects_manager.bucket('fakebucket')
+            idx = 0
+            async for object in bucket.list(version=objects.ListVersion.V1):
+                idx += 1
+                self.assertEqual(object['fsize'], idx)
+                self.assertEqual(object['key'], 'fakeobj%d' % idx)
+        finally:
+            await runner.cleanup()
+
 
 def regions_info():
     return {
@@ -126,7 +194,6 @@ def regions_info():
                 "ttl": 5,
                 "up": {"domains": []},
                 "io": {"domains": []},
-                "rsf": {"domains": []},
                 "api": {"domains": []},
                 "s3": {"domains": []},
                 "uc": {
@@ -135,6 +202,11 @@ def regions_info():
                     ]
                 },
                 "rs": {
+                    "domains": [
+                        "127.0.0.1:8089"
+                    ]
+                },
+                "rsf": {
                     "domains": [
                         "127.0.0.1:8089"
                     ]

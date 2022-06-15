@@ -22,7 +22,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     io::Read,
-    mem::take,
+    mem::{take, transmute},
     net::IpAddr,
     num::NonZeroU16,
     ops::{Deref, DerefMut},
@@ -762,103 +762,127 @@ impl AsRef<qiniu_sdk::http::Metrics> for Metrics {
     }
 }
 
+macro_rules! impl_http_response_parts {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 获取 HTTP 状态码
+            #[getter]
+            fn get_status_code(&self) -> u16 {
+                self.0.status_code().as_u16()
+            }
+
+            /// 设置 HTTP 状态码
+            #[setter]
+            fn set_status_code(&mut self, status_code: u16) -> PyResult<()> {
+                *self.0.status_code_mut() = parse_status_code(status_code)?;
+                Ok(())
+            }
+
+            /// 获取 HTTP Headers
+            #[getter]
+            fn get_headers(&self) -> PyResult<HashMap<String, String>> {
+                convert_headers_to_hashmap(self.0.headers())
+            }
+
+            /// 设置 HTTP Headers
+            #[setter]
+            fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
+                *self.0.headers_mut() = parse_headers(headers)?;
+                Ok(())
+            }
+
+            /// 获取 HTTP 版本
+            #[getter]
+            fn get_version(&self) -> Version {
+                self.0.version().into()
+            }
+
+            /// 设置 HTTP 版本
+            #[setter]
+            fn set_version(&mut self, version: Version) {
+                *self.0.version_mut() = version.into();
+            }
+
+            /// 获取 HTTP 服务器 IP 地址
+            #[getter]
+            fn get_server_ip(&self) -> Option<String> {
+                self.0.server_ip().map(|ip| ip.to_string())
+            }
+
+            /// 设置 HTTP 服务器 IP 地址
+            #[setter]
+            fn set_server_ip(&mut self, server_ip: String) -> PyResult<()> {
+                *self.0.server_ip_mut() = server_ip
+                    .parse::<IpAddr>()
+                    .map(Some)
+                    .map_err(QiniuInvalidIpAddrError::from_err)?;
+                Ok(())
+            }
+
+            /// 获取 HTTP 服务器端口号
+            #[getter]
+            fn get_server_port(&self) -> Option<u16> {
+                self.0.server_port().map(|ip| ip.get())
+            }
+
+            /// 设置 HTTP 服务器端口号
+            #[setter]
+            fn set_server_port(&mut self, server_port: u16) {
+                *self.0.server_port_mut() = NonZeroU16::new(server_port);
+            }
+
+            /// 获取 HTTP 响应的指标信息
+            #[getter]
+            fn get_metrics(&self) -> Option<Metrics> {
+                self.0.metrics().cloned().map(Metrics)
+            }
+
+            /// 设置 HTTP 响应的指标信息
+            #[setter]
+            fn set_metrics(&mut self, metrics: Metrics) {
+                *self.0.metrics_mut() = Some(metrics.0);
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+/// HTTP 响应基础信息
 #[pyclass(subclass)]
 pub(super) struct HttpResponseParts(qiniu_sdk::http::ResponseParts);
 
-#[pymethods]
-impl HttpResponseParts {
-    /// 获取 HTTP 状态码
-    #[getter]
-    fn get_status_code(&self) -> u16 {
-        self.0.status_code().as_u16()
-    }
-
-    /// 设置 HTTP 状态码
-    #[setter]
-    fn set_status_code(&mut self, status_code: u16) -> PyResult<()> {
-        *self.0.status_code_mut() = parse_status_code(status_code)?;
-        Ok(())
-    }
-
-    /// 获取 HTTP Headers
-    #[getter]
-    fn get_headers(&self) -> PyResult<HashMap<String, String>> {
-        convert_headers_to_hashmap(self.0.headers())
-    }
-
-    /// 设置 HTTP Headers
-    #[setter]
-    fn set_headers(&mut self, headers: HashMap<String, String>) -> PyResult<()> {
-        *self.0.headers_mut() = parse_headers(headers)?;
-        Ok(())
-    }
-
-    /// 获取 HTTP 版本
-    #[getter]
-    fn get_version(&self) -> Version {
-        self.0.version().into()
-    }
-
-    /// 设置 HTTP 版本
-    #[setter]
-    fn set_version(&mut self, version: Version) {
-        *self.0.version_mut() = version.into();
-    }
-
-    /// 获取 HTTP 服务器 IP 地址
-    #[getter]
-    fn get_server_ip(&self) -> Option<String> {
-        self.0.server_ip().map(|ip| ip.to_string())
-    }
-
-    /// 设置 HTTP 服务器 IP 地址
-    #[setter]
-    fn set_server_ip(&mut self, server_ip: String) -> PyResult<()> {
-        *self.0.server_ip_mut() = server_ip
-            .parse::<IpAddr>()
-            .map(Some)
-            .map_err(QiniuInvalidIpAddrError::from_err)?;
-        Ok(())
-    }
-
-    /// 获取 HTTP 服务器端口号
-    #[getter]
-    fn get_server_port(&self) -> Option<u16> {
-        self.0.server_port().map(|ip| ip.get())
-    }
-
-    /// 设置 HTTP 服务器端口号
-    #[setter]
-    fn set_server_port(&mut self, server_port: u16) {
-        *self.0.server_port_mut() = NonZeroU16::new(server_port);
-    }
-
-    /// 获取 HTTP 响应的指标信息
-    #[getter]
-    fn get_metrics(&self) -> Option<Metrics> {
-        self.0.metrics().cloned().map(Metrics)
-    }
-
-    /// 设置 HTTP 响应的指标信息
-    #[setter]
-    fn set_metrics(&mut self, metrics: Metrics) {
-        *self.0.metrics_mut() = Some(metrics.0);
-    }
-
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
+impl_http_response_parts!(HttpResponseParts);
 
 impl From<qiniu_sdk::http::ResponseParts> for HttpResponseParts {
     fn from(parts: qiniu_sdk::http::ResponseParts) -> Self {
         Self(parts)
     }
 }
+
+/// 回调函数用的 HTTP 响应基础信息
+///
+/// 用于在回调函数中获取响应相关信息，如状态码，响应头，远程服务器地址等。
+///
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+#[pyclass]
+pub(super) struct HttpResponsePartsContext(&'static mut qiniu_sdk::http::ResponseParts);
+
+impl HttpResponsePartsContext {
+    pub(super) fn new(ctx: &mut qiniu_sdk::http::ResponseParts) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(ctx) })
+    }
+}
+
+impl_http_response_parts!(HttpResponsePartsContext);
 
 macro_rules! impl_response_body {
     ($name:ident) => {

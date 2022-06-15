@@ -2148,7 +2148,7 @@ macro_rules! impl_callback_context {
 ///
 /// 用于在回调函数中获取请求相关信息，如请求路径、请求方法、查询参数、请求头等。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 #[derive(Clone)]
 struct SimplifiedCallbackContext(&'static dyn qiniu_sdk::http_client::SimplifiedCallbackContext);
@@ -2239,7 +2239,7 @@ fn on_receive_response_header(
 ///
 /// 基于简化回调函数上下文，并在此基础上增加获取扩展信息的引用和可变引用的方法。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct CallbackContext(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
 
@@ -2325,7 +2325,7 @@ fn on_ips_chosen(
 ///
 /// 基于回调函数上下文，并在此基础上增加返回部分请求信息的可变引用，以及 UserAgent 和经过解析的 IP 地址列表的获取和设置方法。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct ExtendedCallbackContext(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
 
@@ -2451,7 +2451,7 @@ fn on_backoff(
 ///
 /// 包含 HTTP 请求构建器内除请求体和终端地址提供者以外的参数
 ///
-/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 pub(crate) struct RequestBuilderParts(
     &'static mut qiniu_sdk::http_client::RequestBuilderParts<'static>,

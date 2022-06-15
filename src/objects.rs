@@ -1,7 +1,7 @@
 use super::{
     credential::CredentialProvider,
     exceptions::QiniuApiCallError,
-    http::HttpResponseParts,
+    http::{HttpResponseParts, HttpResponsePartsContext},
     http_client::{
         BucketRegionsQueryer, Endpoints, HttpClient, JsonResponse, RegionsProvider,
         RequestBuilderParts,
@@ -9,10 +9,22 @@ use super::{
     utils::{convert_json_value_to_py_object, parse_mime},
 };
 use anyhow::Result as AnyResult;
+use futures::{
+    lock::Mutex as AsyncMutex, stream::Peekable as AsyncPeekable, StreamExt, TryStreamExt,
+};
 use indexmap::IndexMap;
 use mime::Mime;
 use pyo3::prelude::*;
-use std::collections::HashMap;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    mem::transmute,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "objects")?;
@@ -28,6 +40,9 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<ModifyObjectStatus>()?;
     m.add_class::<ModifyObjectMetadata>()?;
     m.add_class::<ModifyObjectLifeCycle>()?;
+    m.add_class::<ObjectsIterator>()?;
+    m.add_class::<ListVersion>()?;
+    m.add_class::<AsyncObjectsIterator>()?;
     Ok(m)
 }
 
@@ -103,6 +118,48 @@ impl Bucket {
     #[getter]
     fn get_name(&self) -> String {
         self.0.name().to_string()
+    }
+
+    /// 列举对象
+    #[pyo3(
+        text_signature = "($self, /, limit = None, prefix = None, marker = None, version = None, need_parts = None, before_request_callback = None, after_response_ok_callback = None)"
+    )]
+    #[args(
+        limit = "None",
+        prefix = "None",
+        marker = "None",
+        version = "None",
+        need_parts = "None",
+        before_request_callback = "None",
+        after_response_ok_callback = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn list(
+        &self,
+        limit: Option<usize>,
+        prefix: Option<String>,
+        marker: Option<String>,
+        version: Option<ListVersion>,
+        need_parts: Option<bool>,
+        before_request_callback: Option<PyObject>,
+        after_response_ok_callback: Option<PyObject>,
+    ) -> ObjectsLister {
+        let params = Arc::pin(ObjectsIteratorParams {
+            bucket: self.to_owned(),
+            limit,
+            prefix,
+            marker,
+            version,
+            need_parts,
+            before_request_callback,
+            after_response_ok_callback,
+        });
+        ObjectsLister { params }
+    }
+
+    fn __iter__(&self, py: Python<'_>) -> PyResult<ObjectsIterator> {
+        self.list(None, None, None, None, None, None, None)
+            .__iter__(py)
     }
 
     /// 获取对象元信息
@@ -928,5 +985,217 @@ fn before_request_callback(
     move |parts| {
         Python::with_gil(|py| callback.call1(py, (RequestBuilderParts::new(parts),)))?;
         Ok(())
+    }
+}
+
+fn after_response_ok_callback(
+    callback: PyObject,
+) -> impl FnMut(&mut qiniu_sdk::http::ResponseParts) -> AnyResult<()> + Send + Sync + 'static {
+    move |parts| {
+        Python::with_gil(|py| callback.call1(py, (HttpResponsePartsContext::new(parts),)))?;
+        Ok(())
+    }
+}
+
+/// 列举操作迭代器
+///
+/// 可以通过 `Bucket::list` 方法获取该迭代器。
+#[pyclass]
+#[derive(Debug)]
+struct ObjectsLister {
+    params: Pin<Arc<ObjectsIteratorParams>>,
+}
+
+#[pymethods]
+impl ObjectsLister {
+    fn __iter__(&self, py: Python<'_>) -> PyResult<ObjectsIterator> {
+        let iter = self.make_list_builder(py).iter();
+        Ok(ObjectsIterator {
+            iter,
+            _params: self.params.to_owned(),
+        })
+    }
+
+    fn __aiter__(&self, py: Python<'_>) -> PyResult<AsyncObjectsIterator> {
+        let stream = self.make_list_builder(py).stream().peekable();
+        Ok(AsyncObjectsIterator {
+            inner: Arc::new(AsyncObjectsIteratorInner {
+                stream: AsyncMutex::new(stream),
+                ended: AtomicBool::new(false),
+            }),
+            _params: self.params.to_owned(),
+        })
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+impl ObjectsLister {
+    fn make_list_builder(&self, py: Python<'_>) -> qiniu_sdk::objects::ListBuilder<'static> {
+        let mut list_builder: qiniu_sdk::objects::ListBuilder<'static> = {
+            let builder = self.params.bucket.0.list();
+            unsafe { transmute(builder) }
+        };
+        if let Some(limit) = self.params.limit {
+            list_builder.limit(limit);
+        }
+        if let Some(prefix) = &self.params.prefix {
+            list_builder.prefix(Cow::Borrowed(unsafe { transmute(prefix.as_str()) }));
+        }
+        if let Some(marker) = &self.params.marker {
+            list_builder.marker(Cow::Borrowed(unsafe { transmute(marker.as_str()) }));
+        }
+        if let Some(version) = self.params.version {
+            list_builder.version(version.into());
+        }
+        if let Some(true) = self.params.need_parts {
+            list_builder.need_parts();
+        }
+        if let Some(callback) = &self.params.before_request_callback {
+            list_builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+        }
+        if let Some(callback) = &self.params.after_response_ok_callback {
+            list_builder
+                .after_response_ok_callback(after_response_ok_callback(callback.clone_ref(py)));
+        }
+        list_builder
+    }
+}
+
+#[derive(Debug)]
+struct ObjectsIteratorParams {
+    bucket: Bucket,
+    limit: Option<usize>,
+    prefix: Option<String>,
+    marker: Option<String>,
+    version: Option<ListVersion>,
+    need_parts: Option<bool>,
+    before_request_callback: Option<PyObject>,
+    after_response_ok_callback: Option<PyObject>,
+}
+
+/// 列举操作迭代器
+#[pyclass]
+#[derive(Debug)]
+struct ObjectsIterator {
+    _params: Pin<Arc<ObjectsIteratorParams>>,
+    iter: qiniu_sdk::objects::ListIter<'static>,
+}
+
+#[pymethods]
+impl ObjectsIterator {
+    fn __next__(&mut self) -> PyResult<Option<PyObject>> {
+        self.iter
+            .next()
+            .map(|result| {
+                result.map(|entry| convert_json_value_to_py_object(&serde_json::Value::from(entry)))
+            })
+            .transpose()
+            .map_err(QiniuApiCallError::from_err)?
+            .transpose()
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+/// 异步列举操作迭代器
+#[pyclass]
+#[derive(Debug)]
+struct AsyncObjectsIterator {
+    _params: Pin<Arc<ObjectsIteratorParams>>,
+    inner: Arc<AsyncObjectsIteratorInner>,
+}
+
+#[derive(Debug)]
+struct AsyncObjectsIteratorInner {
+    stream: AsyncMutex<AsyncPeekable<qiniu_sdk::objects::ListStream<'static>>>,
+    ended: AtomicBool,
+}
+
+#[pymethods]
+impl AsyncObjectsIterator {
+    fn __anext__(&mut self, py: Python<'_>) -> Option<PyObject> {
+        if self.inner.ended.load(Ordering::SeqCst) {
+            return None;
+        }
+        let inner = self.inner.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut stream = inner.stream.lock().await;
+            let entry = stream
+                .try_next()
+                .await
+                .map(
+                    |entry: Option<
+                        qiniu_sdk::objects::apis::storage::get_objects::ListedObjectEntry,
+                    >| {
+                        entry.map(|entry: qiniu_sdk::objects::apis::storage::get_objects::ListedObjectEntry| {
+                            convert_json_value_to_py_object(&serde_json::Value::from(entry))
+                        })
+                    },
+                )
+                .transpose()
+                .map(|result| {
+                    result.map_err(QiniuApiCallError::from_err).and_then(|res| res)
+                })
+                .transpose()?;
+            if Pin::new(&mut *stream).peek_mut().await.is_none() {
+                inner.ended.store(true, Ordering::SeqCst);
+            }
+            Ok(entry)
+        })
+        .ok()
+        .map(|any| any.into_py(py))
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+/// 列举 API 版本
+///
+/// 目前支持 V1 和 V2，默认为 V2
+#[pyclass]
+#[derive(Copy, Clone, Debug)]
+enum ListVersion {
+    /// 列举 API V1
+    V1 = 1,
+
+    /// 列举 API V2
+    V2 = 2,
+}
+
+impl From<ListVersion> for qiniu_sdk::objects::ListVersion {
+    fn from(version: ListVersion) -> Self {
+        match version {
+            ListVersion::V1 => qiniu_sdk::objects::ListVersion::V1,
+            ListVersion::V2 => qiniu_sdk::objects::ListVersion::V2,
+        }
+    }
+}
+
+impl From<qiniu_sdk::objects::ListVersion> for ListVersion {
+    fn from(version: qiniu_sdk::objects::ListVersion) -> Self {
+        match version {
+            qiniu_sdk::objects::ListVersion::V1 => ListVersion::V1,
+            qiniu_sdk::objects::ListVersion::V2 => ListVersion::V2,
+            _ => unreachable!("Unrecognized ListVersion: {:?}", version),
+        }
     }
 }
