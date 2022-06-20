@@ -4,7 +4,7 @@ use super::{
     http::{HttpResponseParts, HttpResponsePartsContext},
     http_client::{
         BucketRegionsQueryer, Endpoints, HttpClient, JsonResponse, RegionsProvider,
-        RequestBuilderParts,
+        RequestBuilderPartsRef,
     },
     utils::{convert_api_call_error, convert_json_value_to_py_object, parse_mime},
 };
@@ -1021,7 +1021,7 @@ fn make_before_request_callback(
        + Sync
        + 'static {
     move |parts| {
-        Python::with_gil(|py| callback.call1(py, (RequestBuilderParts::new(parts),)))?;
+        Python::with_gil(|py| callback.call1(py, (RequestBuilderPartsRef::new(parts),)))?;
         Ok(())
     }
 }

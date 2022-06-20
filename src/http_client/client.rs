@@ -55,8 +55,8 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<LimitedBackoff>()?;
     m.add_class::<HttpClient>()?;
     m.add_class::<SimplifiedCallbackContext>()?;
-    m.add_class::<CallbackContext>()?;
-    m.add_class::<ExtendedCallbackContext>()?;
+    m.add_class::<CallbackContextRef>()?;
+    m.add_class::<ExtendedCallbackContextRef>()?;
     m.add_class::<JsonResponse>()?;
 
     Ok(())
@@ -2241,16 +2241,16 @@ fn on_receive_response_header(
 ///
 /// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
-struct CallbackContext(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
+struct CallbackContextRef(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
 
-impl CallbackContext {
+impl CallbackContextRef {
     fn new(ctx: &mut dyn qiniu_sdk::http_client::CallbackContext) -> Self {
         #[allow(unsafe_code)]
         Self(unsafe { transmute(ctx) })
     }
 }
 
-impl_callback_context!(CallbackContext);
+impl_callback_context!(CallbackContextRef);
 
 fn on_to_resolve_domain(
     callback: PyObject,
@@ -2259,7 +2259,7 @@ fn on_to_resolve_domain(
        + Sync
        + 'static {
     move |context, domain| {
-        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), domain)))?;
+        Python::with_gil(|py| callback.call1(py, (CallbackContextRef::new(context), domain)))?;
         Ok(())
     }
 }
@@ -2281,7 +2281,7 @@ fn on_domain_resolved(
                 .iter()
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>();
-            callback.call1(py, (CallbackContext::new(context), domain, ips))
+            callback.call1(py, (CallbackContextRef::new(context), domain, ips))
         })?;
         Ok(())
     }
@@ -2298,7 +2298,7 @@ fn on_to_choose_ips(
        + 'static {
     move |context, ips| {
         let ips = ips.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
-        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), ips)))?;
+        Python::with_gil(|py| callback.call1(py, (CallbackContextRef::new(context), ips)))?;
         Ok(())
     }
 }
@@ -2316,7 +2316,9 @@ fn on_ips_chosen(
     move |context, before, after| {
         let before = before.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
         let after = after.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
-        Python::with_gil(|py| callback.call1(py, (CallbackContext::new(context), before, after)))?;
+        Python::with_gil(|py| {
+            callback.call1(py, (CallbackContextRef::new(context), before, after))
+        })?;
         Ok(())
     }
 }
@@ -2327,19 +2329,19 @@ fn on_ips_chosen(
 ///
 /// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
-struct ExtendedCallbackContext(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
+struct ExtendedCallbackContextRef(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
 
-impl ExtendedCallbackContext {
+impl ExtendedCallbackContextRef {
     fn new(ctx: &mut dyn qiniu_sdk::http_client::ExtendedCallbackContext) -> Self {
         #[allow(unsafe_code)]
         Self(unsafe { transmute(ctx) })
     }
 }
 
-impl_callback_context!(ExtendedCallbackContext);
+impl_callback_context!(ExtendedCallbackContextRef);
 
 #[pymethods]
-impl ExtendedCallbackContext {
+impl ExtendedCallbackContextRef {
     /// 获取 HTTP 请求 URL
     #[getter]
     fn get_url(&self) -> String {
@@ -2401,7 +2403,7 @@ fn on_request_signed(
        + Sync
        + 'static {
     move |context| {
-        Python::with_gil(|py| callback.call1(py, (ExtendedCallbackContext::new(context),)))?;
+        Python::with_gil(|py| callback.call1(py, (ExtendedCallbackContextRef::new(context),)))?;
         Ok(())
     }
 }
@@ -2421,7 +2423,7 @@ fn on_response(
             callback.call1(
                 py,
                 (
-                    ExtendedCallbackContext::new(context),
+                    ExtendedCallbackContextRef::new(context),
                     HttpResponseParts::from(parts),
                 ),
             )
@@ -2440,7 +2442,10 @@ fn on_backoff(
         Python::with_gil(|py| {
             callback.call1(
                 py,
-                (ExtendedCallbackContext::new(context), duration.as_nanos()),
+                (
+                    ExtendedCallbackContextRef::new(context),
+                    duration.as_nanos(),
+                ),
             )
         })?;
         Ok(())
@@ -2453,11 +2458,11 @@ fn on_backoff(
 ///
 /// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
-pub(crate) struct RequestBuilderParts(
+pub(crate) struct RequestBuilderPartsRef(
     &'static mut qiniu_sdk::http_client::RequestBuilderParts<'static>,
 );
 
-impl RequestBuilderParts {
+impl RequestBuilderPartsRef {
     pub(crate) fn new(ctx: &mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> Self {
         #[allow(unsafe_code)]
         Self(unsafe { transmute(ctx) })
@@ -2465,7 +2470,7 @@ impl RequestBuilderParts {
 }
 
 #[pymethods]
-impl RequestBuilderParts {
+impl RequestBuilderPartsRef {
     /// 设置是否使用 HTTPS
     #[setter]
     fn set_use_https(&mut self, use_https: bool) {

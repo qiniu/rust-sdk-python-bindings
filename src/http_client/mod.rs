@@ -4,7 +4,7 @@ mod client;
 mod region;
 
 pub(super) use client::{
-    Authorization, Backoff, Chooser, HttpClient, Idempotent, JsonResponse, RequestBuilderParts,
+    Authorization, Backoff, Chooser, HttpClient, Idempotent, JsonResponse, RequestBuilderPartsRef,
     RequestRetrier, Resolver,
 };
 pub(super) use region::{

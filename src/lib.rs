@@ -5,6 +5,7 @@ mod exceptions;
 mod http;
 mod http_client;
 mod objects;
+mod upload;
 mod upload_token;
 mod utils;
 
@@ -25,6 +26,7 @@ fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_submodule(http_client::create_module(py)?)?;
     m.add_submodule(apis::create_module(py)?)?;
     m.add_submodule(objects::create_module(py)?)?;
+    m.add_submodule(upload::create_module(py)?)?;
 
     return Ok(());
 

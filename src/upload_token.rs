@@ -6,6 +6,7 @@ use super::{
     },
     utils::{convert_json_value_to_py_object, convert_py_any_to_json_value},
 };
+use anyhow::Result as AnyResult;
 use pyo3::prelude::*;
 use qiniu_sdk::{
     prelude::UploadTokenProviderExt,
@@ -18,7 +19,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     future::Future,
-    mem::take,
+    mem::transmute,
     pin::Pin,
     time::{Duration, SystemTime},
 };
@@ -27,6 +28,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload_token")?;
     m.add_class::<UploadPolicy>()?;
     m.add_class::<UploadPolicyBuilder>()?;
+    m.add_class::<UploadPolicyBuilderRef>()?;
     m.add_class::<UploadTokenProvider>()?;
     m.add_class::<GetAccessKeyOptions>()?;
     m.add_class::<GetPolicyOptions>()?;
@@ -295,6 +297,133 @@ impl UploadPolicy {
     }
 }
 
+macro_rules! impl_upload_policy_builder {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 指定上传凭证有效期
+            #[pyo3(text_signature = "($self, lifetime)")]
+            fn token_lifetime(&mut self, lifetime_secs: u64) {
+                self.0.token_lifetime(Duration::from_secs(lifetime_secs));
+            }
+
+            /// 指定上传凭证过期时间
+            #[pyo3(text_signature = "($self, deadline)")]
+            fn token_deadline(&mut self, timestamp: u64) {
+                self.0
+                    .token_deadline(SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp));
+            }
+
+            /// 仅允许创建新的对象，不允许覆盖和修改同名对象
+            #[pyo3(text_signature = "($self)")]
+            fn insert_only(&mut self) {
+                self.0.insert_only();
+            }
+
+            /// 启用 MIME 类型自动检测
+            #[pyo3(text_signature = "($self)")]
+            fn enable_mime_detection(&mut self) {
+                self.0.enable_mime_detection();
+            }
+
+            /// 禁用 MIME 类型自动检测
+            #[pyo3(text_signature = "($self)")]
+            fn disable_mime_detection(&mut self) {
+                self.0.disable_mime_detection();
+            }
+
+            /// 设置文件类型
+            #[pyo3(text_signature = "($self, file_type)")]
+            fn file_type(&mut self, file_type: u8) {
+                self.0.file_type(FileType::from(file_type));
+            }
+
+            /// Web 端文件上传成功后，浏览器执行 303 跳转的 URL
+            ///
+            /// 通常用于表单上传。
+            /// 文件上传成功后会跳转到 `<return_url>?upload_ret=<queryString>`，
+            /// `<queryString>` 包含 `return_body()` 内容。
+            /// 如不设置 `return_url`，则直接将 `return_body()` 的内容返回给客户端
+            #[pyo3(text_signature = "($self, url)")]
+            fn return_url(&mut self, url: &str) {
+                self.0.return_url(url);
+            }
+
+            #[pyo3(text_signature = "($self, body)")]
+            fn return_body(&mut self, body: &str) {
+                self.0.return_body(body);
+            }
+
+            /// 上传成功后，自定义七牛云最终返回给上传端（在指定 `return_url()` 时是携带在跳转路径参数中）的数据
+            ///
+            /// 支持[魔法变量](https://developer.qiniu.com/kodo/manual/1235/vars#magicvar)和[自定义变量](https://developer.qiniu.com/kodo/manual/1235/vars#xvar)。
+            /// `return_body` 要求是合法的 JSON 文本。
+            /// 例如 `{"key": $(key), "hash": $(etag), "w": $(imageInfo.width), "h": $(imageInfo.height)}`
+            #[args(host = "\"\"", body = "\"\"", body_type = "\"\"")]
+            #[pyo3(text_signature = "($self, urls, host = '', body = '', body_type = '')")]
+            fn callback(&mut self, urls: Vec<String>, host: &str, body: &str, body_type: &str) {
+                self.0.callback(urls, host, body, body_type);
+            }
+
+            /// 自定义对象名称
+            ///
+            /// 支持[魔法变量](https://developer.qiniu.com/kodo/manual/1235/vars#magicvar)和[自定义变量](https://developer.qiniu.com/kodo/manual/1235/vars#xvar)。
+            /// `force` 为 `false` 时，`save_as` 字段仅当用户上传的时候没有主动指定对象名时起作用，
+            /// `force` 为 `true` 时，将强制按 `save_as` 字段的内容命名
+            #[args(force = "false")]
+            #[pyo3(text_signature = "($self, save_as, force = False)")]
+            fn save_as(&mut self, save_as: &str, force: bool) {
+                self.0.save_as(save_as, force);
+            }
+
+            /// 限定上传文件尺寸的范围
+            ///
+            /// 单位为字节
+            #[args(min = "None", max = "None")]
+            #[pyo3(text_signature = "($self, min = None, max = None)")]
+            fn file_size_limitation(&mut self, min: Option<u64>, max: Option<u64>) {
+                match (min, max) {
+                    (Some(min), Some(max)) => {
+                        self.0.file_size_limitation(min..=max);
+                    }
+                    (Some(min), None) => {
+                        self.0.file_size_limitation(min..);
+                    }
+                    (None, Some(max)) => {
+                        self.0.file_size_limitation(..=max);
+                    }
+                    _ => {}
+                }
+            }
+
+            /// 限定用户上传的文件类型
+            ///
+            /// 指定本字段值，七牛服务器会侦测文件内容以判断 MIME 类型，再用判断值跟指定值进行匹配，
+            /// 匹配成功则允许上传，匹配失败则返回 403 状态码
+            #[pyo3(text_signature = "($self, content_types)")]
+            fn mime_types(&mut self, content_types: Vec<String>) {
+                self.0.mime_types(content_types);
+            }
+
+            /// 对象生命周期
+            ///
+            /// 单位为秒，但精确到天
+            #[pyo3(text_signature = "($self, lifetime)")]
+            fn object_lifetime(&mut self, lifetime_secs: u64) {
+                self.0.object_lifetime(Duration::from_secs(lifetime_secs));
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
 /// 上传策略构建器
 ///
 /// 用于生成上传策略，一旦生成完毕，上传策略将无法被修改
@@ -384,127 +513,8 @@ impl UploadPolicyBuilder {
     fn build(&mut self) -> UploadPolicy {
         UploadPolicy(self.0.build())
     }
-
-    /// 指定上传凭证有效期
-    #[pyo3(text_signature = "($self, lifetime)")]
-    fn token_lifetime(&mut self, lifetime_secs: u64) {
-        self.0.token_lifetime(Duration::from_secs(lifetime_secs));
-    }
-
-    /// 指定上传凭证过期时间
-    #[pyo3(text_signature = "($self, deadline)")]
-    fn token_deadline(&mut self, timestamp: u64) {
-        self.0
-            .token_deadline(SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp));
-    }
-
-    /// 仅允许创建新的对象，不允许覆盖和修改同名对象
-    #[pyo3(text_signature = "($self)")]
-    fn insert_only(&mut self) {
-        self.0.insert_only();
-    }
-
-    /// 启用 MIME 类型自动检测
-    #[pyo3(text_signature = "($self)")]
-    fn enable_mime_detection(&mut self) {
-        self.0.enable_mime_detection();
-    }
-
-    /// 禁用 MIME 类型自动检测
-    #[pyo3(text_signature = "($self)")]
-    fn disable_mime_detection(&mut self) {
-        self.0.disable_mime_detection();
-    }
-
-    /// 设置文件类型
-    #[pyo3(text_signature = "($self, file_type)")]
-    fn file_type(&mut self, file_type: u8) {
-        self.0.file_type(FileType::from(file_type));
-    }
-
-    /// Web 端文件上传成功后，浏览器执行 303 跳转的 URL
-    ///
-    /// 通常用于表单上传。
-    /// 文件上传成功后会跳转到 `<return_url>?upload_ret=<queryString>`，
-    /// `<queryString>` 包含 `return_body()` 内容。
-    /// 如不设置 `return_url`，则直接将 `return_body()` 的内容返回给客户端
-    #[pyo3(text_signature = "($self, url)")]
-    fn return_url(&mut self, url: &str) {
-        self.0.return_url(url);
-    }
-
-    #[pyo3(text_signature = "($self, body)")]
-    fn return_body(&mut self, body: &str) {
-        self.0.return_body(body);
-    }
-
-    /// 上传成功后，自定义七牛云最终返回给上传端（在指定 `return_url()` 时是携带在跳转路径参数中）的数据
-    ///
-    /// 支持[魔法变量](https://developer.qiniu.com/kodo/manual/1235/vars#magicvar)和[自定义变量](https://developer.qiniu.com/kodo/manual/1235/vars#xvar)。
-    /// `return_body` 要求是合法的 JSON 文本。
-    /// 例如 `{"key": $(key), "hash": $(etag), "w": $(imageInfo.width), "h": $(imageInfo.height)}`
-    #[args(host = "\"\"", body = "\"\"", body_type = "\"\"")]
-    #[pyo3(text_signature = "($self, urls, host = '', body = '', body_type = '')")]
-    fn callback(&mut self, urls: Vec<String>, host: &str, body: &str, body_type: &str) {
-        self.0.callback(urls, host, body, body_type);
-    }
-
-    /// 自定义对象名称
-    ///
-    /// 支持[魔法变量](https://developer.qiniu.com/kodo/manual/1235/vars#magicvar)和[自定义变量](https://developer.qiniu.com/kodo/manual/1235/vars#xvar)。
-    /// `force` 为 `false` 时，`save_as` 字段仅当用户上传的时候没有主动指定对象名时起作用，
-    /// `force` 为 `true` 时，将强制按 `save_as` 字段的内容命名
-    #[args(force = "false")]
-    #[pyo3(text_signature = "($self, save_as, force = False)")]
-    fn save_as(&mut self, save_as: &str, force: bool) {
-        self.0.save_as(save_as, force);
-    }
-
-    /// 限定上传文件尺寸的范围
-    ///
-    /// 单位为字节
-    #[args(min = "None", max = "None")]
-    #[pyo3(text_signature = "($self, min = None, max = None)")]
-    fn file_size_limitation(&mut self, min: Option<u64>, max: Option<u64>) {
-        match (min, max) {
-            (Some(min), Some(max)) => {
-                self.0.file_size_limitation(min..=max);
-            }
-            (Some(min), None) => {
-                self.0.file_size_limitation(min..);
-            }
-            (None, Some(max)) => {
-                self.0.file_size_limitation(..=max);
-            }
-            _ => {}
-        }
-    }
-
-    /// 限定用户上传的文件类型
-    ///
-    /// 指定本字段值，七牛服务器会侦测文件内容以判断 MIME 类型，再用判断值跟指定值进行匹配，
-    /// 匹配成功则允许上传，匹配失败则返回 403 状态码
-    #[pyo3(text_signature = "($self, content_types)")]
-    fn mime_types(&mut self, content_types: Vec<String>) {
-        self.0.mime_types(content_types);
-    }
-
-    /// 对象生命周期
-    ///
-    /// 单位为秒，但精确到天
-    #[pyo3(text_signature = "($self, lifetime)")]
-    fn object_lifetime(&mut self, lifetime_secs: u64) {
-        self.0.object_lifetime(Duration::from_secs(lifetime_secs));
-    }
-
-    fn __repr__(&self) -> String {
-        format!("{:?}", self.0)
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
 }
+impl_upload_policy_builder!(UploadPolicyBuilder);
 
 impl ToPyObject for UploadPolicyBuilder {
     fn to_object(&self, py: Python<'_>) -> PyObject {
@@ -523,6 +533,21 @@ impl UploadPolicyBuilder {
         Ok(())
     }
 }
+
+/// 上传策略构建器
+///
+/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+#[pyclass]
+struct UploadPolicyBuilderRef(&'static mut qiniu_sdk::upload_token::UploadPolicyBuilder);
+
+impl UploadPolicyBuilderRef {
+    fn new(builder: &mut qiniu_sdk::upload_token::UploadPolicyBuilder) -> Self {
+        #[allow(unsafe_code)]
+        Self(unsafe { transmute(builder) })
+    }
+}
+
+impl_upload_policy_builder!(UploadPolicyBuilderRef);
 
 /// 上传凭证获取接口
 ///
@@ -779,39 +804,18 @@ impl BucketUploadTokenProvider {
         bucket: &str,
         lifetime_secs: u64,
         credential: CredentialProvider,
-        on_policy_generated: Option<&PyAny>,
+        on_policy_generated: Option<PyObject>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::BucketUploadTokenProvider::builder(
             bucket,
             Duration::from_secs(lifetime_secs),
             credential,
         );
-        if let Some(on_policy_generated) = on_policy_generated {
-            builder = set_on_policy_generated_to_builder(builder, on_policy_generated);
+        if let Some(callback) = on_policy_generated {
+            builder = builder.on_policy_generated(on_policy_generated_callback(callback));
         }
         let provider = builder.build();
-        return (Self, UploadTokenProvider(Box::new(provider)));
-
-        fn set_on_policy_generated_to_builder<'a, C: Clone + 'a>(
-            mut builder: qiniu_sdk::upload_token::BucketUploadTokenProviderBuilder<'a, C>,
-            any: &PyAny,
-        ) -> qiniu_sdk::upload_token::BucketUploadTokenProviderBuilder<'a, C> {
-            if any.is_callable() {
-                builder = Python::with_gil(|py| {
-                    let obj = any.to_object(py);
-                    builder.on_policy_generated(move |upload_policy_builder| {
-                        let builder = UploadPolicyBuilder(take(upload_policy_builder));
-                        let builder = Python::with_gil(|py| {
-                            obj.call1(py, (builder,))
-                                .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
-                        })?;
-                        *upload_policy_builder = builder.0;
-                        Ok(())
-                    })
-                });
-            }
-            builder
-        }
+        (Self, UploadTokenProvider(Box::new(provider)))
     }
 }
 
@@ -833,7 +837,7 @@ impl ObjectUploadTokenProvider {
         object: &str,
         lifetime_secs: u64,
         credential: CredentialProvider,
-        on_policy_generated: Option<&PyAny>,
+        on_policy_generated: Option<PyObject>,
     ) -> (Self, UploadTokenProvider) {
         let mut builder = qiniu_sdk::upload_token::ObjectUploadTokenProvider::builder(
             bucket,
@@ -841,32 +845,21 @@ impl ObjectUploadTokenProvider {
             Duration::from_secs(lifetime_secs),
             credential,
         );
-        if let Some(on_policy_generated) = on_policy_generated {
-            builder = set_on_policy_generated_to_builder(builder, on_policy_generated);
+        if let Some(callback) = on_policy_generated {
+            builder = builder.on_policy_generated(on_policy_generated_callback(callback));
         }
         let provider = builder.build();
-        return (Self, UploadTokenProvider(Box::new(provider)));
+        (Self, UploadTokenProvider(Box::new(provider)))
+    }
+}
 
-        fn set_on_policy_generated_to_builder<'a, C: Clone + 'a>(
-            mut builder: qiniu_sdk::upload_token::ObjectUploadTokenProviderBuilder<'a, C>,
-            any: &PyAny,
-        ) -> qiniu_sdk::upload_token::ObjectUploadTokenProviderBuilder<'a, C> {
-            if any.is_callable() {
-                builder = Python::with_gil(|py| {
-                    let obj = any.to_object(py);
-                    builder.on_policy_generated(move |upload_policy_builder| {
-                        let builder = UploadPolicyBuilder(take(upload_policy_builder));
-                        let builder = Python::with_gil(|py| {
-                            obj.call1(py, (builder,))
-                                .and_then(|retval| retval.extract::<UploadPolicyBuilder>(py))
-                        })?;
-                        *upload_policy_builder = builder.0;
-                        Ok(())
-                    })
-                });
-            }
-            builder
-        }
+pub(super) fn on_policy_generated_callback(
+    callback: PyObject,
+) -> impl Fn(&mut qiniu_sdk::upload_token::UploadPolicyBuilder) -> AnyResult<()> + Sync + Send + 'static
+{
+    move |builder| {
+        Python::with_gil(|py| callback.call1(py, (UploadPolicyBuilderRef::new(builder),)))?;
+        Ok(())
     }
 }
 
