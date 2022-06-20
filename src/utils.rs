@@ -1,10 +1,10 @@
 use super::{
     exceptions::{
-        QiniuBodySizeMissingError, QiniuHeaderValueEncodingError, QiniuInvalidDomainWithPortError,
-        QiniuInvalidEndpointError, QiniuInvalidHeaderNameError, QiniuInvalidHeaderValueError,
-        QiniuInvalidIpAddrError, QiniuInvalidIpAddrWithPortError, QiniuInvalidMethodError,
-        QiniuInvalidPortError, QiniuInvalidStatusCodeError, QiniuInvalidURLError,
-        QiniuMimeParseError, QiniuUnsupportedTypeError,
+        QiniuApiCallErrorInfo, QiniuBodySizeMissingError, QiniuHeaderValueEncodingError,
+        QiniuInvalidDomainWithPortError, QiniuInvalidEndpointError, QiniuInvalidHeaderNameError,
+        QiniuInvalidHeaderValueError, QiniuInvalidIpAddrError, QiniuInvalidIpAddrWithPortError,
+        QiniuInvalidMethodError, QiniuInvalidPortError, QiniuInvalidStatusCodeError,
+        QiniuInvalidURLError, QiniuMimeParseError, QiniuUnsupportedTypeError,
     },
     http_client::{Endpoint, EndpointsProvider, RegionsProvider},
 };
@@ -780,4 +780,8 @@ fn split_seek_from(seek_from: SeekFrom) -> (i64, i64) {
         SeekFrom::Current(offset) => (offset, 1),
         SeekFrom::End(offset) => (offset as i64, 2),
     }
+}
+
+pub(super) fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
+    Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
 }

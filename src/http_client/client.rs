@@ -13,11 +13,11 @@ use crate::{
     },
     upload_token::UploadTokenProvider,
     utils::{
-        convert_headers_to_hashmap, convert_py_any_to_json_value, extract_async_multipart,
-        extract_endpoints_provider, extract_ip_addrs_with_port, extract_sync_multipart,
-        parse_domain_with_port, parse_header_name, parse_header_value, parse_headers,
-        parse_ip_addr_with_port, parse_ip_addrs, parse_method, parse_mime, parse_query_pairs,
-        PythonIoBase,
+        convert_api_call_error, convert_headers_to_hashmap, convert_py_any_to_json_value,
+        extract_async_multipart, extract_endpoints_provider, extract_ip_addrs_with_port,
+        extract_sync_multipart, parse_domain_with_port, parse_header_name, parse_header_value,
+        parse_headers, parse_ip_addr_with_port, parse_ip_addrs, parse_method, parse_mime,
+        parse_query_pairs, PythonIoBase,
     },
 };
 use anyhow::Result as AnyResult;
@@ -1315,10 +1315,6 @@ impl LimitedBackoff {
     fn get_max_backoff(&self) -> u64 {
         self.max_backoff_ns
     }
-}
-
-fn convert_api_call_error(error: &PyErr) -> PyResult<QiniuApiCallErrorInfo> {
-    Python::with_gil(|py| error.value(py).getattr("args")?.get_item(0i32)?.extract())
 }
 
 fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(

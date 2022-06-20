@@ -34,6 +34,14 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         "QiniuBodySizeMissingError",
         py.get_type::<QiniuBodySizeMissingError>(),
     )?;
+    m.add(
+        "QiniuInvalidConcurrency",
+        py.get_type::<QiniuInvalidConcurrency>(),
+    )?;
+    m.add(
+        "QiniuInvalidObjectSize",
+        py.get_type::<QiniuInvalidObjectSize>(),
+    )?;
 
     QiniuInvalidURLError::register(py, m)?;
     QiniuInvalidStatusCodeError::register(py, m)?;
@@ -148,6 +156,18 @@ create_exception!(
     QiniuUnsupportedTypeError,
     PyValueError,
     "七牛不支持的类型错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidConcurrency,
+    PyValueError,
+    "七牛并行数错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidObjectSize,
+    PyValueError,
+    "七牛对象大小错误"
 );
 create_exception_with_info!(
     qiniu_sdk_bindings,

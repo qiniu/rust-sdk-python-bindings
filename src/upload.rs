@@ -1,13 +1,16 @@
 use super::{
     credential::CredentialProvider,
+    exceptions::{QiniuApiCallError, QiniuInvalidConcurrency, QiniuInvalidObjectSize},
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
+    utils::convert_api_call_error,
 };
 use pyo3::prelude::*;
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload")?;
     m.add_class::<UploadTokenSigner>()?;
+    m.add_class::<ConcurrencyProvider>()?;
     Ok(m)
 }
 
@@ -46,5 +49,51 @@ impl UploadTokenSigner {
             builder = builder.on_policy_generated(on_policy_generated_callback(callback));
         }
         Self(builder.build())
+    }
+}
+
+/// 并发数获取接口
+///
+/// 获取分片上传时的并发数
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct ConcurrencyProvider(Box<dyn qiniu_sdk::upload::ConcurrencyProvider>);
+
+#[pymethods]
+impl ConcurrencyProvider {
+    /// 获取并发数
+    #[getter]
+    fn get_concurrency(&self) -> usize {
+        self.0.concurrency().as_usize()
+    }
+
+    /// 反馈并发数结果
+    fn feedback(
+        &self,
+        concurrency: usize,
+        object_size: u64,
+        elapsed_ns: u64,
+        error: Option<&QiniuApiCallError>,
+    ) -> PyResult<()> {
+        let concurrency = qiniu_sdk::upload::Concurrency::new(concurrency).map_or_else(
+            || Err(QiniuInvalidConcurrency::new_err("Invalid concurrency")),
+            Ok,
+        )?;
+        let object_size = NonZeroU64::new(object_size).map_or_else(
+            || Err(QiniuInvalidObjectSize::new_err("Invalid object size")),
+            Ok,
+        )?;
+        let error = error.map(PyErr::from);
+        let error = error.as_ref().map(convert_api_call_error).transpose()?;
+        let mut feedback_builder = qiniu_sdk::upload::ConcurrencyProviderFeedback::builder(
+            concurrency,
+            object_size,
+            Duration::from_nanos(elapsed_ns),
+        );
+        if let Some(error) = &error {
+            feedback_builder.error(error.as_ref());
+        }
+        self.0.feedback(feedback_builder.build());
+        Ok(())
     }
 }
