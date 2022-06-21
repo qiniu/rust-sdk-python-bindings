@@ -21,6 +21,7 @@ mime = "0.3.16"
 indexmap = "1.8.2"
 dyn-clone = "1.0.5"
 num-integer = "0.1.45"
+maybe-owned = "0.3.4"
 smart-default = "0.6.0"
 serde_json = "1.0.79"
 pyo3 = { version = "0.16.4", features = ["abi3-py38", "extension-module", "multiple-pymethods"] }

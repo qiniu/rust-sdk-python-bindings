@@ -97,3 +97,33 @@ impl ConcurrencyProvider {
         Ok(())
     }
 }
+
+impl qiniu_sdk::upload::ConcurrencyProvider for ConcurrencyProvider {
+    fn concurrency(&self) -> qiniu_sdk::upload::Concurrency {
+        self.0.concurrency()
+    }
+
+    fn feedback(&self, feedback: qiniu_sdk::upload::ConcurrencyProviderFeedback<'_>) {
+        self.0.feedback(feedback)
+    }
+}
+
+/// 固定并发数提供者
+#[pyclass(extends = ConcurrencyProvider)]
+#[derive(Clone, Debug)]
+struct FixedConcurrencyProvider;
+
+#[pymethods]
+impl FixedConcurrencyProvider {
+    /// 创建固定并发数提供者
+    ///
+    /// 如果传入 `0` 将返回 [`None`]。
+    #[new]
+    pub fn new(concurrency: usize) -> PyResult<(Self, ConcurrencyProvider)> {
+        let provider = qiniu_sdk::upload::FixedConcurrencyProvider::new(concurrency).map_or_else(
+            || Err(QiniuInvalidConcurrency::new_err("Invalid concurrency")),
+            Ok,
+        )?;
+        Ok((Self, ConcurrencyProvider(Box::new(provider))))
+    }
+}

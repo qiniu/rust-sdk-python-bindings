@@ -184,6 +184,7 @@ impl ApiDetailedDescription {
             quote!(before_request_signed),
             quote!(after_request_signed),
             quote!(response_ok),
+            quote!(response_error),
             quote!(before_backoff),
             quote!(after_backoff),
         ];
@@ -224,7 +225,7 @@ impl ApiDetailedDescription {
             #[doc = #api_docs]
             #[pyclass(extends = HttpClient)]
             #[pyo3(
-                text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
+                text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
             )]
             #[derive(Clone)]
             struct Client;
@@ -250,6 +251,7 @@ impl ApiDetailedDescription {
                     before_request_signed = "None",
                     after_request_signed = "None",
                     response_ok = "None",
+                    response_error = "None",
                     before_backoff = "None",
                     after_backoff = "None"
                 )]
@@ -272,6 +274,7 @@ impl ApiDetailedDescription {
                     before_request_signed: Option<PyObject>,
                     after_request_signed: Option<PyObject>,
                     response_ok: Option<PyObject>,
+                    response_error: Option<PyObject>,
                     before_backoff: Option<PyObject>,
                     after_backoff: Option<PyObject>,
                 ) -> PyResult<(Self, HttpClient)> {
@@ -293,6 +296,7 @@ impl ApiDetailedDescription {
                         before_request_signed,
                         after_request_signed,
                         response_ok,
+                        response_error,
                         before_backoff,
                         after_backoff,
                     )?;
@@ -418,6 +422,7 @@ impl ApiDetailedDescription {
             "before_request_signed",
             "after_request_signed",
             "response_ok",
+            "response_error",
             "before_backoff",
             "after_backoff",
         ] {

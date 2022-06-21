@@ -7,6 +7,7 @@ use crate::{
     utils::{extract_endpoints, parse_domain_with_port},
 };
 use futures::future::BoxFuture;
+use maybe_owned::MaybeOwned;
 use pyo3::{prelude::*, pyclass::CompareOp};
 use qiniu_sdk::http_client::EndpointsGetOptions;
 use std::{borrow::Cow, path::PathBuf, time::Duration};
@@ -275,7 +276,7 @@ impl EndpointsProvider {
             .build();
         let endpoints = py
             .allow_threads(|| self.0.get_endpoints(opts))
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .into_owned();
         Self::make_initializer(endpoints, py)
     }
@@ -299,7 +300,7 @@ impl EndpointsProvider {
             let endpoints = provider
                 .async_get_endpoints(opts)
                 .await
-                .map_err(QiniuApiCallError::from_err)?
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
                 .into_owned();
             Python::with_gil(|py| Self::make_initializer(endpoints, py))
         })
@@ -434,7 +435,7 @@ impl RegionsProvider {
     fn get(&self, py: Python<'_>) -> PyResult<Py<Region>> {
         let region = py
             .allow_threads(|| self.0.get(Default::default()))
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .into_region();
         Self::make_initializer(region, py)
     }
@@ -443,7 +444,7 @@ impl RegionsProvider {
     fn get_all(&self, py: Python<'_>) -> PyResult<Vec<Py<Region>>> {
         let regions = py
             .allow_threads(|| self.0.get_all(Default::default()))
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .into_regions()
             .into_iter()
             .map(|region| Self::make_initializer(region, py))
@@ -458,7 +459,7 @@ impl RegionsProvider {
             let region = provider
                 .async_get(Default::default())
                 .await
-                .map_err(QiniuApiCallError::from_err)?
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
                 .into_region();
             Python::with_gil(|py| Self::make_initializer(region, py))
         })
@@ -471,7 +472,7 @@ impl RegionsProvider {
             let regions = provider
                 .async_get_all(Default::default())
                 .await
-                .map_err(QiniuApiCallError::from_err)?
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
                 .into_regions()
                 .into_iter()
                 .map(|region| Python::with_gil(|py| Self::make_initializer(region, py)))

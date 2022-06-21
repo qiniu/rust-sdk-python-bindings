@@ -1,3 +1,4 @@
+use maybe_owned::MaybeOwned;
 use pyo3::{
     create_exception,
     exceptions::{PyIOError, PyRuntimeError, PyTypeError, PyValueError},
@@ -356,7 +357,7 @@ create_exception_with_info!(
     "QiniuApiCallError",
     PyIOError,
     QiniuApiCallErrorInfo,
-    qiniu_sdk::http_client::ResponseError,
+    MaybeOwned<'static, qiniu_sdk::http_client::ResponseError>,
     "七牛 API 调用错误"
 );
 create_exception_with_info!(

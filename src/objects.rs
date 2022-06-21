@@ -13,6 +13,7 @@ use futures::{
     lock::Mutex as AsyncMutex, stream::Peekable as AsyncPeekable, StreamExt, TryStreamExt,
 };
 use indexmap::IndexMap;
+use maybe_owned::MaybeOwned;
 use mime::Mime;
 use pyo3::prelude::*;
 use std::{
@@ -506,7 +507,7 @@ impl StatObject {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -519,7 +520,7 @@ impl StatObject {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -557,7 +558,7 @@ impl CopyObject {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -570,7 +571,7 @@ impl CopyObject {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -615,7 +616,7 @@ impl MoveObject {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -628,7 +629,7 @@ impl MoveObject {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -671,7 +672,7 @@ impl DeleteObject {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -684,7 +685,7 @@ impl DeleteObject {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -723,7 +724,7 @@ impl UnfreezeObject {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -736,7 +737,7 @@ impl UnfreezeObject {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -779,7 +780,7 @@ impl SetObjectType {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -792,7 +793,7 @@ impl SetObjectType {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -835,7 +836,7 @@ impl ModifyObjectStatus {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -848,7 +849,7 @@ impl ModifyObjectStatus {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -893,7 +894,7 @@ impl ModifyObjectMetadata {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -906,7 +907,7 @@ impl ModifyObjectMetadata {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })
@@ -956,7 +957,7 @@ impl ModifyObjectLifeCycle {
         let resp = py.allow_threads(|| {
             self.make_operation()
                 .call()
-                .map_err(QiniuApiCallError::from_err)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
         })?;
         let (parts, body) = resp.into_parts_and_body();
         make_json_response(parts, body.as_ref(), py)
@@ -969,7 +970,7 @@ impl ModifyObjectLifeCycle {
                 .make_operation()
                 .async_call()
                 .await
-                .map_err(QiniuApiCallError::from_err)?;
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
             let (parts, body) = resp.into_parts_and_body();
             Python::with_gil(|py| make_json_response(parts, body.as_ref(), py))
         })

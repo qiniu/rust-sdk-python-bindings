@@ -21,6 +21,7 @@ use crate::{
     },
 };
 use anyhow::Result as AnyResult;
+use maybe_owned::MaybeOwned;
 use num_integer::Integer;
 use pyo3::{prelude::*, types::PyIterator};
 use qiniu_sdk::prelude::AuthorizationProvider;
@@ -266,7 +267,7 @@ impl Resolver {
         }
         let ips = py
             .allow_threads(|| self.0.resolve(domain, builder.build()))
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .into_ip_addrs()
             .into_iter()
             .map(|ip| ip.to_string())
@@ -292,7 +293,7 @@ impl Resolver {
             }
             let ips = resolver
                 .resolve(&domain, builder.build())
-                .map_err(QiniuApiCallError::from_err)?
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
                 .into_ip_addrs()
                 .into_iter()
                 .map(|ip| ip.to_string())
@@ -1331,7 +1332,7 @@ fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(
 /// 用于发送 HTTP 请求的入口。
 #[pyclass(subclass)]
 #[pyo3(
-    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
+    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
 )]
 #[derive(Clone)]
 pub(crate) struct HttpClient(qiniu_sdk::http_client::HttpClient);
@@ -1357,6 +1358,7 @@ impl HttpClient {
         before_request_signed = "None",
         after_request_signed = "None",
         response_ok = "None",
+        response_error = "None",
         before_backoff = "None",
         after_backoff = "None"
     )]
@@ -1379,6 +1381,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
     ) -> PyResult<Self> {
@@ -1436,6 +1439,9 @@ impl HttpClient {
         if let Some(response_ok) = response_ok {
             builder.on_response(on_response(response_ok));
         }
+        if let Some(response_error) = response_error {
+            builder.on_error(on_error(response_error));
+        }
         if let Some(before_backoff) = before_backoff {
             builder.on_before_backoff(on_backoff(before_backoff));
         }
@@ -1483,7 +1489,7 @@ impl HttpClient {
 
     /// 发出阻塞请求
     #[pyo3(
-        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         service_names = "None",
@@ -1515,6 +1521,7 @@ impl HttpClient {
         before_request_signed = "None",
         after_request_signed = "None",
         response_ok = "None",
+        response_error = "None",
         before_backoff = "None",
         after_backoff = "None"
     )]
@@ -1552,6 +1559,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
         py: Python<'_>,
@@ -1588,6 +1596,7 @@ impl HttpClient {
             before_request_signed,
             after_request_signed,
             response_ok,
+            response_error,
             before_backoff,
             after_backoff,
             py,
@@ -1597,7 +1606,7 @@ impl HttpClient {
 
     /// 发出异步请求
     #[pyo3(
-        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
+        text_signature = "(method, endpoints, /, service_names = None, use_https = None, version = None, path = None, headers = None, accept_json = None, accept_application_octet_stream = None, query = None, query_pairs = None, appended_user_agent = None, authorization = None, idempotent = None, bytes = None, body = None, body_len = None, content_type = None, json = None, form = None, multipart = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         service_names = "None",
@@ -1629,6 +1638,7 @@ impl HttpClient {
         before_request_signed = "None",
         after_request_signed = "None",
         response_ok = "None",
+        response_error = "None",
         before_backoff = "None",
         after_backoff = "None"
     )]
@@ -1666,6 +1676,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
         py: Python<'p>,
@@ -1705,6 +1716,7 @@ impl HttpClient {
                     before_request_signed,
                     after_request_signed,
                     response_ok,
+                    response_error,
                     before_backoff,
                     after_backoff,
                 )
@@ -1757,6 +1769,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
         py: Python<'_>,
@@ -1794,6 +1807,7 @@ impl HttpClient {
             before_request_signed,
             after_request_signed,
             response_ok,
+            response_error,
             before_backoff,
             after_backoff,
         )?;
@@ -1826,7 +1840,11 @@ impl HttpClient {
                 .map_err(QiniuIoError::from_err)?;
         }
 
-        let response = py.allow_threads(|| builder.call().map_err(QiniuApiCallError::from_err))?;
+        let response = py.allow_threads(|| {
+            builder
+                .call()
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+        })?;
         let (parts, body) = response.into_parts_and_body();
         Ok((SyncHttpResponse::from(body), HttpResponseParts::from(parts)))
     }
@@ -1865,6 +1883,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
     ) -> PyResult<(AsyncHttpResponse, HttpResponseParts)> {
@@ -1902,6 +1921,7 @@ impl HttpClient {
             before_request_signed,
             after_request_signed,
             response_ok,
+            response_error,
             before_backoff,
             after_backoff,
         )?;
@@ -1948,7 +1968,7 @@ impl HttpClient {
         } else {
             builder.call().await
         }
-        .map_err(QiniuApiCallError::from_err)?;
+        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
         let (parts, body) = response.into_parts_and_body();
         Ok((
             AsyncHttpResponse::from(body),
@@ -1980,6 +2000,7 @@ impl HttpClient {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
     ) -> PyResult<()> {
@@ -2044,6 +2065,9 @@ impl HttpClient {
         }
         if let Some(response_ok) = response_ok {
             builder.on_response(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            builder.on_error(on_error(response_error));
         }
         if let Some(before_backoff) = before_backoff {
             builder.on_before_backoff(on_backoff(before_backoff));
@@ -2423,6 +2447,27 @@ fn on_response(
                     HttpResponseParts::from(parts),
                 ),
             )
+        })?;
+        Ok(())
+    }
+}
+
+fn on_error(
+    callback: PyObject,
+) -> impl Fn(
+    &mut dyn qiniu_sdk::http_client::ExtendedCallbackContext,
+    &qiniu_sdk::http_client::ResponseError,
+) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |context, error| {
+        #[allow(unsafe_code)]
+        let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
+        let error = QiniuApiCallError::from_err(MaybeOwned::Borrowed(error));
+        let error = convert_api_call_error(&error)?;
+        Python::with_gil(|py| {
+            callback.call1(py, (ExtendedCallbackContextRef::new(context), error))
         })?;
         Ok(())
     }

@@ -10,7 +10,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 #[doc = "在将所有数据分片都上传完成后，必须调用 completeMultipartUpload API 来完成整个文件的 Multipart Upload。用户需要提供有效数据的分片列表（包括 PartNumber 和调用 uploadPart API 服务端返回的 Etag）。服务端收到用户提交的分片列表后，会逐一验证每个数据分片的有效性。当所有的数据分片验证通过后，会把这些数据分片组合成一个完整的对象"]
 # [pyclass (extends = HttpClient)]
 #[pyo3(
-    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, before_backoff = None, after_backoff = None)"
+    text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
 )]
 #[derive(Clone)]
 struct Client;
@@ -35,6 +35,7 @@ impl Client {
         before_request_signed = "None",
         after_request_signed = "None",
         response_ok = "None",
+        response_error = "None",
         before_backoff = "None",
         after_backoff = "None"
     )]
@@ -57,6 +58,7 @@ impl Client {
         before_request_signed: Option<PyObject>,
         after_request_signed: Option<PyObject>,
         response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
         before_backoff: Option<PyObject>,
         after_backoff: Option<PyObject>,
     ) -> PyResult<(Self, HttpClient)> {
@@ -78,6 +80,7 @@ impl Client {
             before_request_signed,
             after_request_signed,
             response_ok,
+            response_error,
             before_backoff,
             after_backoff,
         )?;
@@ -85,7 +88,7 @@ impl Client {
     }
     #[doc = "发出阻塞请求"]
     #[pyo3(
-        text_signature = "(endpoints, upload_token, /, use_https, version, headers, query, query_pairs, appended_user_agent, bucket_name, object_name, upload_id, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, before_backoff, after_backoff)"
+        text_signature = "(endpoints, upload_token, /, use_https, version, headers, query, query_pairs, appended_user_agent, bucket_name, object_name, upload_id, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, response_error, before_backoff, after_backoff)"
     )]
     #[args(
         r#use_https = "None",
@@ -108,6 +111,7 @@ impl Client {
         r#before_request_signed = "None",
         r#after_request_signed = "None",
         r#response_ok = "None",
+        r#response_error = "None",
         r#before_backoff = "None",
         r#after_backoff = "None"
     )]
@@ -136,6 +140,7 @@ impl Client {
         r#before_request_signed: Option<PyObject>,
         r#after_request_signed: Option<PyObject>,
         r#response_ok: Option<PyObject>,
+        r#response_error: Option<PyObject>,
         r#before_backoff: Option<PyObject>,
         r#after_backoff: Option<PyObject>,
         py: Python<'_>,
@@ -201,6 +206,7 @@ impl Client {
             before_request_signed,
             after_request_signed,
             response_ok,
+            response_error,
             before_backoff,
             after_backoff,
             py,
@@ -213,7 +219,7 @@ impl Client {
     }
     #[doc = "发出异步请求"]
     #[pyo3(
-        text_signature = "(endpoints, upload_token, /, use_https, version, headers, query, query_pairs, appended_user_agent, bucket_name, object_name, upload_id, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, before_backoff, after_backoff)"
+        text_signature = "(endpoints, upload_token, /, use_https, version, headers, query, query_pairs, appended_user_agent, bucket_name, object_name, upload_id, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, response_error, before_backoff, after_backoff)"
     )]
     #[args(
         r#use_https = "None",
@@ -236,6 +242,7 @@ impl Client {
         r#before_request_signed = "None",
         r#after_request_signed = "None",
         r#response_ok = "None",
+        r#response_error = "None",
         r#before_backoff = "None",
         r#after_backoff = "None"
     )]
@@ -264,6 +271,7 @@ impl Client {
         r#before_request_signed: Option<PyObject>,
         r#after_request_signed: Option<PyObject>,
         r#response_ok: Option<PyObject>,
+        r#response_error: Option<PyObject>,
         r#before_backoff: Option<PyObject>,
         r#after_backoff: Option<PyObject>,
         py: Python<'p>,
@@ -331,6 +339,7 @@ impl Client {
                     before_request_signed,
                     after_request_signed,
                     response_ok,
+                    response_error,
                     before_backoff,
                     after_backoff,
                 )
