@@ -43,6 +43,18 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         "QiniuInvalidObjectSize",
         py.get_type::<QiniuInvalidObjectSize>(),
     )?;
+    m.add(
+        "QiniuInvalidPartSize",
+        py.get_type::<QiniuInvalidPartSize>(),
+    )?;
+    m.add(
+        "QiniuInvalidMultiply",
+        py.get_type::<QiniuInvalidMultiply>(),
+    )?;
+    m.add(
+        "QiniuInvalidLimitation",
+        py.get_type::<QiniuInvalidLimitation>(),
+    )?;
 
     QiniuInvalidURLError::register(py, m)?;
     QiniuInvalidStatusCodeError::register(py, m)?;
@@ -169,6 +181,24 @@ create_exception!(
     QiniuInvalidObjectSize,
     PyValueError,
     "七牛对象大小错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidPartSize,
+    PyValueError,
+    "七牛分片大小错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidMultiply,
+    PyValueError,
+    "七牛分片大小错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidLimitation,
+    PyValueError,
+    "七牛分片限制错误"
 );
 create_exception_with_info!(
     qiniu_sdk_bindings,

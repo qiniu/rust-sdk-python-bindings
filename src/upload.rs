@@ -1,6 +1,9 @@
 use super::{
     credential::CredentialProvider,
-    exceptions::{QiniuApiCallError, QiniuInvalidConcurrency, QiniuInvalidObjectSize},
+    exceptions::{
+        QiniuApiCallError, QiniuInvalidConcurrency, QiniuInvalidLimitation, QiniuInvalidMultiply,
+        QiniuInvalidObjectSize, QiniuInvalidPartSize,
+    },
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
     utils::convert_api_call_error,
 };
@@ -111,19 +114,142 @@ impl qiniu_sdk::upload::ConcurrencyProvider for ConcurrencyProvider {
 /// 固定并发数提供者
 #[pyclass(extends = ConcurrencyProvider)]
 #[derive(Clone, Debug)]
+#[pyo3(text_signature = "(concurrency)")]
 struct FixedConcurrencyProvider;
 
 #[pymethods]
 impl FixedConcurrencyProvider {
     /// 创建固定并发数提供者
     ///
-    /// 如果传入 `0` 将返回 [`None`]。
+    /// 如果传入 `0` 将抛出异常
     #[new]
-    pub fn new(concurrency: usize) -> PyResult<(Self, ConcurrencyProvider)> {
+    fn new(concurrency: usize) -> PyResult<(Self, ConcurrencyProvider)> {
         let provider = qiniu_sdk::upload::FixedConcurrencyProvider::new(concurrency).map_or_else(
             || Err(QiniuInvalidConcurrency::new_err("Invalid concurrency")),
             Ok,
         )?;
         Ok((Self, ConcurrencyProvider(Box::new(provider))))
+    }
+}
+
+/// 分片大小获取接口
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct DataPartitionProvider(Box<dyn qiniu_sdk::upload::DataPartitionProvider>);
+
+#[pymethods]
+impl DataPartitionProvider {
+    #[getter]
+    fn get_part_size(&self) -> u64 {
+        self.0.part_size().as_u64()
+    }
+
+    /// 反馈并发数结果
+    fn feedback(
+        &self,
+        part_size: u64,
+        elapsed_ns: u64,
+        error: Option<&QiniuApiCallError>,
+    ) -> PyResult<()> {
+        let part_size = qiniu_sdk::upload::PartSize::new(part_size).map_or_else(
+            || Err(QiniuInvalidPartSize::new_err("Invalid part size")),
+            Ok,
+        )?;
+        let error = error.map(PyErr::from);
+        let error = error.as_ref().map(convert_api_call_error).transpose()?;
+        let extensions = qiniu_sdk::http::Extensions::new();
+        let mut feedback_builder = qiniu_sdk::upload::DataPartitionProviderFeedback::builder(
+            part_size,
+            Duration::from_nanos(elapsed_ns),
+            &extensions,
+        );
+        if let Some(error) = &error {
+            feedback_builder.error(error.as_ref());
+        }
+        self.0.feedback(feedback_builder.build());
+        Ok(())
+    }
+}
+
+impl qiniu_sdk::upload::DataPartitionProvider for DataPartitionProvider {
+    fn part_size(&self) -> qiniu_sdk::upload::PartSize {
+        self.0.part_size()
+    }
+
+    fn feedback(&self, feedback: qiniu_sdk::upload::DataPartitionProviderFeedback<'_>) {
+        self.0.feedback(feedback)
+    }
+}
+
+/// 固定分片大小提供者
+#[pyclass(extends = DataPartitionProvider)]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "(part_size)")]
+struct FixedDataPartitionProvider;
+
+#[pymethods]
+impl FixedDataPartitionProvider {
+    /// 创建固定分片大小提供者
+    ///
+    /// 如果传入 `0` 将抛出异常
+    #[new]
+    fn new(part_size: u64) -> PyResult<(Self, DataPartitionProvider)> {
+        let provider = qiniu_sdk::upload::FixedDataPartitionProvider::new(part_size).map_or_else(
+            || Err(QiniuInvalidPartSize::new_err("Invalid part size")),
+            Ok,
+        )?;
+        Ok((Self, DataPartitionProvider(Box::new(provider))))
+    }
+}
+
+/// 整数倍分片大小提供者
+///
+/// 基于一个分片大小提供者实例，如果提供的分片大小不是指定倍数的整数倍，则下调到它的整数倍
+#[pyclass(extends = DataPartitionProvider)]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "(base, multiply)")]
+struct MultiplyDataPartitionProvider;
+
+#[pymethods]
+impl MultiplyDataPartitionProvider {
+    /// 创建整数倍分片大小提供者
+    ///
+    /// 如果传入 `0` 将抛出异常
+    #[new]
+    fn new(base: DataPartitionProvider, multiply: u64) -> PyResult<(Self, DataPartitionProvider)> {
+        let provider = qiniu_sdk::upload::MultiplyDataPartitionProvider::new(base, multiply)
+            .map_or_else(
+                || Err(QiniuInvalidMultiply::new_err("Invalid multiply")),
+                Ok,
+            )?;
+        Ok((Self, DataPartitionProvider(Box::new(provider))))
+    }
+}
+
+/// 受限的分片大小提供者
+///
+/// 基于一个分片大小提供者实例，如果提供的分片大小在限制范围外，则调整到限制范围内。
+#[pyclass(extends = DataPartitionProvider)]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "(base, min, max)")]
+struct LimitedDataPartitionProvider;
+
+#[pymethods]
+impl LimitedDataPartitionProvider {
+    /// 创建受限的分片大小提供者
+    ///
+    /// 如果传入 `0` 作为 `min` 或 `max` 将抛出异常
+    #[new]
+    fn new(
+        base: DataPartitionProvider,
+        min: u64,
+        max: u64,
+    ) -> PyResult<(Self, DataPartitionProvider)> {
+        let provider = qiniu_sdk::upload::LimitedDataPartitionProvider::new(base, min, max)
+            .map_or_else(
+                || Err(QiniuInvalidLimitation::new_err("Invalid limitation")),
+                Ok,
+            )?;
+        Ok((Self, DataPartitionProvider(Box::new(provider))))
     }
 }
