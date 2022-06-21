@@ -14,6 +14,17 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload")?;
     m.add_class::<UploadTokenSigner>()?;
     m.add_class::<ConcurrencyProvider>()?;
+    m.add_class::<FixedConcurrencyProvider>()?;
+    m.add_class::<DataPartitionProvider>()?;
+    m.add_class::<FixedDataPartitionProvider>()?;
+    m.add_class::<MultiplyDataPartitionProvider>()?;
+    m.add_class::<LimitedDataPartitionProvider>()?;
+    m.add_class::<ResumablePolicy>()?;
+    m.add_class::<ResumablePolicyProvider>()?;
+    m.add_class::<AlwaysSinglePart>()?;
+    m.add_class::<AlwaysMultiParts>()?;
+    m.add_class::<FixedThresholdResumablePolicy>()?;
+    m.add_class::<MultiplePartitionsResumablePolicyProvider>()?;
     Ok(m)
 }
 
