@@ -19,11 +19,12 @@ use futures::{
     future::{select, Either},
     io::Cursor,
     lock::Mutex as AsyncMutex,
-    pin_mut, ready, AsyncRead, AsyncSeek, FutureExt, SinkExt, StreamExt,
+    pin_mut, ready, AsyncRead, AsyncReadExt, AsyncSeek, FutureExt, SinkExt, StreamExt,
 };
 use pyo3::{
+    exceptions::PyIOError,
     prelude::*,
-    types::{PyDict, PyTuple},
+    types::{PyBytes, PyDict, PyTuple},
 };
 use qiniu_sdk::{
     http::{
@@ -406,6 +407,83 @@ fn extract_bytes_from_py_object(py: Python<'_>, obj: PyObject) -> PyResult<Vec<u
 
 fn make_io_error_from_py_err(err: PyErr) -> IoError {
     IoError::new(IoErrorKind::Other, err)
+}
+
+pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
+    let m = PyModule::new(py, "utils")?;
+    m.add_class::<Reader>()?;
+    m.add_class::<AsyncReader>()?;
+    Ok(m)
+}
+
+#[pyclass]
+pub(super) struct Reader(Box<dyn qiniu_sdk::upload::DynRead>);
+
+impl<T: Read + Debug + Sync + Send + 'static> From<T> for Reader {
+    fn from(reader: T) -> Self {
+        Self(Box::new(reader))
+    }
+}
+
+#[pymethods]
+impl Reader {
+    /// 读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        let mut buf = Vec::new();
+        if let Ok(size) = u64::try_from(size) {
+            buf.reserve(size as usize);
+            (&mut self.0).take(size).read_to_end(&mut buf)
+        } else {
+            self.0.read_to_end(&mut buf)
+        }
+        .map_err(PyIOError::new_err)?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// 读取所有响应体数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        self.read(-1, py)
+    }
+}
+
+#[pyclass]
+pub(super) struct AsyncReader(Arc<AsyncMutex<dyn qiniu_sdk::upload::DynAsyncRead>>);
+
+impl<T: AsyncRead + Unpin + Debug + Sync + Send + 'static> From<T> for AsyncReader {
+    fn from(reader: T) -> Self {
+        Self(Arc::new(AsyncMutex::new(reader)))
+    }
+}
+
+#[pymethods]
+impl AsyncReader {
+    /// 异步读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut *reader).take(size).read_to_end(&mut buf).await
+            } else {
+                reader.read_to_end(&mut buf).await
+            }
+            .map_err(PyIOError::new_err)?;
+            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
+        })
+    }
+
+    /// 异步所有读取响应体数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        self.read(-1, py)
+    }
 }
 
 pub(super) fn parse_uri(url: &str) -> PyResult<Uri> {

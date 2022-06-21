@@ -27,6 +27,18 @@
 
 .. include:: ../src/apis/index.rst
 
+.. automodule:: qiniu_sdk_bindings.objects
+   :members:
+   :show-inheritance:
+
+.. automodule:: qiniu_sdk_bindings.upload
+   :members:
+   :show-inheritance:
+
+.. automodule:: qiniu_sdk_bindings.utils
+   :members:
+   :show-inheritance:
+
 .. automodule:: qiniu_sdk_bindings
    :members:
    :show-inheritance:

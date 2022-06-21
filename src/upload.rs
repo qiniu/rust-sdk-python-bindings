@@ -2,10 +2,10 @@ use super::{
     credential::CredentialProvider,
     exceptions::{
         QiniuApiCallError, QiniuInvalidConcurrency, QiniuInvalidLimitation, QiniuInvalidMultiply,
-        QiniuInvalidObjectSize, QiniuInvalidPartSize,
+        QiniuInvalidObjectSize, QiniuInvalidPartSize, QiniuIoError,
     },
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
-    utils::convert_api_call_error,
+    utils::{convert_api_call_error, AsyncReader, PythonIoBase, Reader},
 };
 use pyo3::prelude::*;
 use std::{num::NonZeroU64, time::Duration};
@@ -71,6 +71,8 @@ impl ConcurrencyProvider {
     }
 
     /// 反馈并发数结果
+    #[pyo3(text_signature = "(concurrency, object_size, elapsed_ns, /, error = None)")]
+    #[args(error = "None")]
     fn feedback(
         &self,
         concurrency: usize,
@@ -113,7 +115,7 @@ impl qiniu_sdk::upload::ConcurrencyProvider for ConcurrencyProvider {
 
 /// 固定并发数提供者
 #[pyclass(extends = ConcurrencyProvider)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(concurrency)")]
 struct FixedConcurrencyProvider;
 
@@ -145,6 +147,8 @@ impl DataPartitionProvider {
     }
 
     /// 反馈并发数结果
+    #[pyo3(text_signature = "(part_size, elapsed_ns, /, error = None)")]
+    #[args(error = "None")]
     fn feedback(
         &self,
         part_size: u64,
@@ -183,7 +187,7 @@ impl qiniu_sdk::upload::DataPartitionProvider for DataPartitionProvider {
 
 /// 固定分片大小提供者
 #[pyclass(extends = DataPartitionProvider)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(part_size)")]
 struct FixedDataPartitionProvider;
 
@@ -206,7 +210,7 @@ impl FixedDataPartitionProvider {
 ///
 /// 基于一个分片大小提供者实例，如果提供的分片大小不是指定倍数的整数倍，则下调到它的整数倍
 #[pyclass(extends = DataPartitionProvider)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(base, multiply)")]
 struct MultiplyDataPartitionProvider;
 
@@ -230,7 +234,7 @@ impl MultiplyDataPartitionProvider {
 ///
 /// 基于一个分片大小提供者实例，如果提供的分片大小在限制范围外，则调整到限制范围内。
 #[pyclass(extends = DataPartitionProvider)]
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(base, min, max)")]
 struct LimitedDataPartitionProvider;
 
@@ -251,5 +255,177 @@ impl LimitedDataPartitionProvider {
                 Ok,
             )?;
         Ok((Self, DataPartitionProvider(Box::new(provider))))
+    }
+}
+
+/// 可恢复策略
+///
+/// 选择使用单请求上传或分片上传
+#[pyclass]
+#[derive(Debug, Copy, Clone)]
+enum ResumablePolicy {
+    /// 单请求上传
+    SinglePartUploading = 0,
+    /// 分片上传
+    MultiPartsUploading = 1,
+}
+
+impl From<qiniu_sdk::upload::ResumablePolicy> for ResumablePolicy {
+    fn from(policy: qiniu_sdk::upload::ResumablePolicy) -> Self {
+        match policy {
+            qiniu_sdk::upload::ResumablePolicy::MultiPartsUploading => {
+                ResumablePolicy::MultiPartsUploading
+            }
+            qiniu_sdk::upload::ResumablePolicy::SinglePartUploading => {
+                ResumablePolicy::SinglePartUploading
+            }
+            _ => unreachable!("Unknown Resumable Policy: {:?}", policy),
+        }
+    }
+}
+
+impl From<ResumablePolicy> for qiniu_sdk::upload::ResumablePolicy {
+    fn from(policy: ResumablePolicy) -> Self {
+        match policy {
+            ResumablePolicy::SinglePartUploading => {
+                qiniu_sdk::upload::ResumablePolicy::MultiPartsUploading
+            }
+            ResumablePolicy::MultiPartsUploading => {
+                qiniu_sdk::upload::ResumablePolicy::SinglePartUploading
+            }
+        }
+    }
+}
+
+/// 可恢复策略获取接口
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct ResumablePolicyProvider(Box<dyn qiniu_sdk::upload::ResumablePolicyProvider>);
+
+#[pymethods]
+impl ResumablePolicyProvider {
+    /// 通过数据源大小获取可恢复策略
+    #[pyo3(text_signature = "(source_size)")]
+    fn get_policy_from_size(&self, source_size: u64) -> ResumablePolicy {
+        self.0
+            .get_policy_from_size(source_size, Default::default())
+            .into()
+    }
+
+    /// 通过输入流获取可恢复策略
+    ///
+    /// 返回选择的可恢复策略，以及经过更新的输入流
+    #[pyo3(text_signature = "(reader)")]
+    fn get_policy_from_reader(&self, reader: PyObject) -> PyResult<(ResumablePolicy, Reader)> {
+        self.0
+            .get_policy_from_reader(Box::new(PythonIoBase::new(reader)), Default::default())
+            .map(|(policy, reader)| (policy.into(), reader.into()))
+            .map_err(QiniuIoError::from_err)
+    }
+
+    /// 通过异步输入流获取可恢复策略
+    ///
+    /// 返回选择的可恢复策略，以及经过更新的异步输入流
+    #[pyo3(text_signature = "(reader)")]
+    fn get_policy_from_async_reader<'p>(
+        &'p self,
+        reader: PyObject,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let provider = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            provider
+                .get_policy_from_async_reader(
+                    Box::new(PythonIoBase::new(reader).into_async_read()),
+                    Default::default(),
+                )
+                .await
+                .map(|(policy, reader)| (ResumablePolicy::from(policy), AsyncReader::from(reader)))
+                .map_err(QiniuIoError::from_err)
+        })
+    }
+}
+
+/// 总是选择单请求上传
+#[pyclass(extends = ResumablePolicyProvider)]
+#[derive(Copy, Clone, Debug)]
+#[pyo3(text_signature = "()")]
+struct AlwaysSinglePart;
+
+#[pymethods]
+impl AlwaysSinglePart {
+    /// 创建单请求上传
+    #[new]
+    fn new() -> (Self, ResumablePolicyProvider) {
+        (
+            Self,
+            ResumablePolicyProvider(Box::new(qiniu_sdk::upload::AlwaysSinglePart)),
+        )
+    }
+}
+
+/// 总是选择分片上传
+#[pyclass(extends = ResumablePolicyProvider)]
+#[derive(Copy, Clone, Debug)]
+#[pyo3(text_signature = "()")]
+struct AlwaysMultiParts;
+
+#[pymethods]
+impl AlwaysMultiParts {
+    /// 创建单请求上传
+    #[new]
+    fn new() -> (Self, ResumablePolicyProvider) {
+        (
+            Self,
+            ResumablePolicyProvider(Box::new(qiniu_sdk::upload::AlwaysMultiParts)),
+        )
+    }
+}
+
+/// 固定阀值的可恢复策略
+#[pyclass(extends = ResumablePolicyProvider)]
+#[derive(Copy, Clone, Debug)]
+#[pyo3(text_signature = "(threshold)")]
+struct FixedThresholdResumablePolicy;
+
+#[pymethods]
+impl FixedThresholdResumablePolicy {
+    /// 创建单请求上传
+    #[new]
+    fn new(threshold: u64) -> (Self, ResumablePolicyProvider) {
+        (
+            Self,
+            ResumablePolicyProvider(Box::new(
+                qiniu_sdk::upload::FixedThresholdResumablePolicy::new(threshold),
+            )),
+        )
+    }
+}
+
+/// 整数倍分片大小的可恢复策略
+///
+/// 在数据源大小超过分片大小提供者返回的分片大小的整数倍时，将使用分片上传。
+#[pyclass(extends = ResumablePolicyProvider)]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "(base, multiply)")]
+struct MultiplePartitionsResumablePolicyProvider;
+
+#[pymethods]
+impl MultiplePartitionsResumablePolicyProvider {
+    /// 创建整数倍分片大小的可恢复策略
+    ///
+    /// 如果传入 `0` 则抛出异常
+    #[new]
+    fn new(
+        base: DataPartitionProvider,
+        multiply: u64,
+    ) -> PyResult<(Self, ResumablePolicyProvider)> {
+        let provider =
+            qiniu_sdk::upload::MultiplePartitionsResumablePolicyProvider::new(base, multiply)
+                .map_or_else(
+                    || Err(QiniuInvalidMultiply::new_err("Invalid multiply")),
+                    Ok,
+                )?;
+        Ok((Self, ResumablePolicyProvider(Box::new(provider))))
     }
 }
