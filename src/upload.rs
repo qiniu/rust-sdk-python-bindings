@@ -4,13 +4,18 @@ use super::{
         QiniuApiCallError, QiniuInvalidConcurrency, QiniuInvalidLimitation, QiniuInvalidMultiply,
         QiniuInvalidObjectSize, QiniuInvalidPartSize, QiniuIoError,
     },
+    http_client::RegionsProvider,
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
-    utils::{convert_api_call_error, AsyncReader, PythonIoBase, Reader},
+    utils::{
+        convert_api_call_error, convert_json_value_to_py_object, parse_mime, AsyncReader,
+        PythonIoBase, Reader,
+    },
 };
 use async_std::fs::File as AsyncFile;
+use maybe_owned::MaybeOwned;
 use pyo3::prelude::*;
-use qiniu_sdk::prelude::ResumableRecorder;
-use std::{fs::File, num::NonZeroU64, time::Duration};
+use qiniu_sdk::prelude::{ResumableRecorder, SinglePartUploader};
+use std::{collections::HashMap, fs::File, num::NonZeroU64, sync::Arc, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload")?;
@@ -707,4 +712,216 @@ impl FileSystemResumableRecorderAsyncMedium {
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
     }
+}
+
+/// 表单上传器
+///
+/// 通过七牛表单上传 API 一次上传整个数据流
+#[pyclass]
+#[derive(Debug, Clone)]
+struct FormUploader(Arc<qiniu_sdk::upload::FormUploader>);
+
+#[pymethods]
+impl FormUploader {
+    // TODO: constructor
+
+    #[pyo3(
+        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn upload_path(
+        &self,
+        path: &str,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+    ) -> PyResult<PyObject> {
+        let object_params = make_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+        )?;
+        self.0
+            .upload_path(path, object_params)
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+            .and_then(|v| convert_json_value_to_py_object(&v))
+    }
+
+    #[pyo3(
+        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn upload_reader(
+        &self,
+        reader: PyObject,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+    ) -> PyResult<PyObject> {
+        let object_params = make_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+        )?;
+        self.0
+            .upload_reader(PythonIoBase::new(reader), object_params)
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+            .and_then(|v| convert_json_value_to_py_object(&v))
+    }
+
+    #[pyo3(
+        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn async_upload_path<'p>(
+        &self,
+        path: String,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object_params = make_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+        )?;
+        let uploader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            uploader
+                .async_upload_path(&path, object_params)
+                .await
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+
+    #[pyo3(
+        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn async_upload_reader<'p>(
+        &self,
+        reader: PyObject,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object_params = make_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+        )?;
+        let uploader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            uploader
+                .async_upload_reader(PythonIoBase::new(reader).into_async_read(), object_params)
+                .await
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+}
+
+fn make_object_params(
+    region_provider: Option<RegionsProvider>,
+    object_name: Option<&str>,
+    file_name: Option<&str>,
+    content_type: Option<&str>,
+    metadata: Option<HashMap<String, String>>,
+    custom_vars: Option<HashMap<String, String>>,
+    uploaded_part_ttl_secs: Option<u64>,
+) -> PyResult<qiniu_sdk::upload::ObjectParams> {
+    let mut builder = qiniu_sdk::upload::ObjectParams::builder();
+    if let Some(region_provider) = region_provider {
+        builder.region_provider(region_provider);
+    }
+    if let Some(object_name) = object_name {
+        builder.object_name(object_name);
+    }
+    if let Some(file_name) = file_name {
+        builder.file_name(file_name);
+    }
+    if let Some(content_type) = content_type {
+        builder.content_type(parse_mime(content_type)?);
+    }
+    if let Some(metadata) = metadata {
+        builder.metadata(metadata);
+    }
+    if let Some(custom_vars) = custom_vars {
+        builder.custom_vars(custom_vars);
+    }
+    if let Some(uploaded_part_ttl_secs) = uploaded_part_ttl_secs {
+        builder.uploaded_part_ttl(Duration::from_secs(uploaded_part_ttl_secs));
+    }
+    Ok(builder.build())
 }
