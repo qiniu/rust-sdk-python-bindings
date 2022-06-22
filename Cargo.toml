@@ -17,6 +17,7 @@ name = "qiniu_sdk_bindings"
 crate-type = ["cdylib"]
 
 [dependencies]
+hex = "0.4.3"
 mime = "0.3.16"
 indexmap = "1.8.2"
 dyn-clone = "1.0.5"

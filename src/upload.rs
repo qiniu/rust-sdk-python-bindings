@@ -7,8 +7,10 @@ use super::{
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
     utils::{convert_api_call_error, AsyncReader, PythonIoBase, Reader},
 };
+use async_std::fs::File as AsyncFile;
 use pyo3::prelude::*;
-use std::{num::NonZeroU64, time::Duration};
+use qiniu_sdk::prelude::ResumableRecorder;
+use std::{fs::File, num::NonZeroU64, time::Duration};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload")?;
@@ -25,6 +27,12 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<AlwaysMultiParts>()?;
     m.add_class::<FixedThresholdResumablePolicy>()?;
     m.add_class::<MultiplePartitionsResumablePolicyProvider>()?;
+    m.add_class::<SourceKey>()?;
+    m.add_class::<DummyResumableRecorder>()?;
+    m.add_class::<DummyResumableRecorderMedium>()?;
+    m.add_class::<FileSystemResumableRecorder>()?;
+    m.add_class::<FileSystemResumableRecorderMedium>()?;
+    m.add_class::<FileSystemResumableRecorderAsyncMedium>()?;
     Ok(m)
 }
 
@@ -63,6 +71,14 @@ impl UploadTokenSigner {
             builder = builder.on_policy_generated(on_policy_generated_callback(callback));
         }
         Self(builder.build())
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
@@ -111,6 +127,14 @@ impl ConcurrencyProvider {
         }
         self.0.feedback(feedback_builder.build());
         Ok(())
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
@@ -281,6 +305,17 @@ enum ResumablePolicy {
     MultiPartsUploading = 1,
 }
 
+#[pymethods]
+impl ResumablePolicy {
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
 impl From<qiniu_sdk::upload::ResumablePolicy> for ResumablePolicy {
     fn from(policy: qiniu_sdk::upload::ResumablePolicy) -> Self {
         match policy {
@@ -354,6 +389,14 @@ impl ResumablePolicyProvider {
                 .map(|(policy, reader)| (ResumablePolicy::from(policy), AsyncReader::from(reader)))
                 .map_err(QiniuIoError::from_err)
         })
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
 
@@ -438,5 +481,230 @@ impl MultiplePartitionsResumablePolicyProvider {
                     Ok,
                 )?;
         Ok((Self, ResumablePolicyProvider(Box::new(provider))))
+    }
+}
+
+/// 数据源 KEY
+///
+/// 用于区分不同的数据源
+#[pyclass]
+#[derive(Debug, Clone)]
+struct SourceKey(qiniu_sdk::upload::SourceKey);
+
+#[pymethods]
+impl SourceKey {
+    fn __str__(&self) -> String {
+        hex::encode(&*self.0)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+macro_rules! impl_resumable_recorder {
+    ($name:ident, $medium:ident, $async_medium:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 根据数据源 KEY 打开只读记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_read(&self, source_key: &SourceKey) -> PyResult<$medium> {
+                self.0
+                    .open_for_read(&source_key.0)
+                    .map($medium)
+                    .map_err(QiniuIoError::from_err)
+            }
+
+            /// 根据数据源 KEY 打开追加记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_append(&self, source_key: &SourceKey) -> PyResult<$medium> {
+                self.0
+                    .open_for_append(&source_key.0)
+                    .map($medium)
+                    .map_err(QiniuIoError::from_err)
+            }
+
+            /// 根据数据源 KEY 创建追加记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_create_new(&self, source_key: &SourceKey) -> PyResult<$medium> {
+                self.0
+                    .open_for_create_new(&source_key.0)
+                    .map($medium)
+                    .map_err(QiniuIoError::from_err)
+            }
+
+            /// 根据数据源 KEY 删除记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn delete(&self, source_key: &SourceKey) -> PyResult<()> {
+                self.0.delete(&source_key.0).map_err(QiniuIoError::from_err)
+            }
+
+            /// 根据数据源 KEY 打开异步只读记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_async_read<'p>(
+                &self,
+                source_key: SourceKey,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let recorder = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    recorder
+                        .open_for_async_read(&source_key.0)
+                        .await
+                        .map($async_medium)
+                        .map_err(QiniuIoError::from_err)
+                })
+            }
+
+            /// 根据数据源 KEY 打开异步追加记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_async_append<'p>(
+                &self,
+                source_key: SourceKey,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let recorder = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    recorder
+                        .open_for_async_append(&source_key.0)
+                        .await
+                        .map($async_medium)
+                        .map_err(QiniuIoError::from_err)
+                })
+            }
+
+            /// 根据数据源 KEY 创建异步追加记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn open_for_async_create_new<'p>(
+                &self,
+                source_key: SourceKey,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let recorder = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    recorder
+                        .open_for_async_create_new(&source_key.0)
+                        .await
+                        .map($async_medium)
+                        .map_err(QiniuIoError::from_err)
+                })
+            }
+
+            /// 根据数据源 KEY 异步删除记录介质
+            #[pyo3(text_signature = "($self, source_key)")]
+            fn async_delete<'p>(
+                &self,
+                source_key: SourceKey,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let recorder = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    recorder
+                        .async_delete(&source_key.0)
+                        .await
+                        .map_err(QiniuIoError::from_err)
+                })
+            }
+        }
+    };
+}
+
+/// 无断点恢复记录器
+///
+/// 实现了断点恢复记录器接口，但总是返回找不到记录
+#[pyclass]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "()")]
+struct DummyResumableRecorder(qiniu_sdk::upload::DummyResumableRecorder);
+
+#[pymethods]
+impl DummyResumableRecorder {
+    /// 创建无断点恢复记录器
+    #[new]
+    fn new() -> Self {
+        Self(qiniu_sdk::upload::DummyResumableRecorder::new())
+    }
+}
+impl_resumable_recorder!(
+    DummyResumableRecorder,
+    DummyResumableRecorderMedium,
+    DummyResumableRecorderMedium
+);
+
+/// 无断点恢复记录介质
+///
+/// 实现了断点恢复记录介质接口，但总是返回错误
+#[pyclass]
+#[derive(Debug, Clone, Copy)]
+struct DummyResumableRecorderMedium(qiniu_sdk::upload::DummyResumableRecorderMedium);
+
+#[pymethods]
+impl DummyResumableRecorderMedium {
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// 文件系统断点恢复记录器
+///
+/// 基于文件系统提供断点恢复记录功能
+#[pyclass]
+#[derive(Debug, Clone)]
+#[pyo3(text_signature = "(path = None)")]
+struct FileSystemResumableRecorder(qiniu_sdk::upload::FileSystemResumableRecorder);
+
+#[pymethods]
+impl FileSystemResumableRecorder {
+    /// 创建文件系统断点恢复记录器，传入一个目录路径用于储存断点记录
+    #[new]
+    #[args(path = "None")]
+    fn new(path: Option<String>) -> Self {
+        let recorder = if let Some(path) = path {
+            qiniu_sdk::upload::FileSystemResumableRecorder::new(path)
+        } else {
+            qiniu_sdk::upload::FileSystemResumableRecorder::default()
+        };
+        Self(recorder)
+    }
+}
+impl_resumable_recorder!(
+    FileSystemResumableRecorder,
+    FileSystemResumableRecorderMedium,
+    FileSystemResumableRecorderAsyncMedium
+);
+
+/// 文件恢复记录介质
+#[pyclass]
+#[derive(Debug)]
+struct FileSystemResumableRecorderMedium(File);
+
+#[pymethods]
+impl FileSystemResumableRecorderMedium {
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
+/// 异步文件恢复记录介质
+#[pyclass]
+#[derive(Debug)]
+struct FileSystemResumableRecorderAsyncMedium(AsyncFile);
+
+#[pymethods]
+impl FileSystemResumableRecorderAsyncMedium {
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
     }
 }
