@@ -1,7 +1,10 @@
-from qiniu_sdk_bindings import upload
+from qiniu_sdk_bindings import upload, QiniuIoError
 import unittest
 import io
+import os
 import secrets
+import hashlib
+import aiofiles
 
 
 class TestConcurrencyProvider(unittest.TestCase):
@@ -52,3 +55,28 @@ class TestResumablePolicyProvider(unittest.TestCase):
             15*1024*1024), upload.ResumablePolicy.SinglePartUploading)
         self.assertEqual(provider.get_policy_from_size(
             17*1024*1024), upload.ResumablePolicy.MultiPartsUploading)
+
+
+class TestResumableRecorder(unittest.IsolatedAsyncioTestCase):
+    async def test_resumable_recorder(self):
+        sha1 = hashlib.sha1()
+        sha1.update(b"key")
+        key = upload.SourceKey(sha1.digest())
+        with self.assertRaises(QiniuIoError):
+            await upload.DummyResumableRecorder().open_for_async_create_new(key)
+        async with aiofiles.tempfile.TemporaryDirectory() as d:
+            recorder = upload.FileSystemResumableRecorder(d)
+
+            try:
+                medium = await recorder.open_for_async_create_new(key)
+                await medium.write(b"hello world\n")
+                await medium.flush()
+
+                medium = await recorder.open_for_async_append(key)
+                await medium.write(b"hello world\n")
+                await medium.flush()
+
+                medium = await recorder.open_for_async_read(key)
+                self.assertEqual(await medium.readall(), b"hello world\nhello world\n")
+            finally:
+                await recorder.async_delete(key)

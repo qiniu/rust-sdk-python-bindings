@@ -427,7 +427,7 @@ impl<T: Read + Debug + Sync + Send + 'static> From<T> for Reader {
 
 #[pymethods]
 impl Reader {
-    /// 读取响应体数据
+    /// 读取数据
     #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
     fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
@@ -442,7 +442,7 @@ impl Reader {
         Ok(PyBytes::new(py, &buf))
     }
 
-    /// 读取所有响应体数据
+    /// 读取所有数据
     #[pyo3(text_signature = "($self)")]
     fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
         self.read(-1, py)
@@ -460,7 +460,7 @@ impl<T: AsyncRead + Unpin + Debug + Sync + Send + 'static> From<T> for AsyncRead
 
 #[pymethods]
 impl AsyncReader {
-    /// 异步读取响应体数据
+    /// 异步读取数据
     #[pyo3(text_signature = "($self, size = -1, /)")]
     #[args(size = "-1")]
     fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
@@ -479,7 +479,7 @@ impl AsyncReader {
         })
     }
 
-    /// 异步所有读取响应体数据
+    /// 异步所有读取数据
     #[pyo3(text_signature = "($self)")]
     fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
         self.read(-1, py)

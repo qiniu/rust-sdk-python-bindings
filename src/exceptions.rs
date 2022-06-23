@@ -55,6 +55,10 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         "QiniuInvalidLimitation",
         py.get_type::<QiniuInvalidLimitation>(),
     )?;
+    m.add(
+        "QiniuInvalidSourceKeyLengthError",
+        py.get_type::<QiniuInvalidSourceKeyLengthError>(),
+    )?;
 
     QiniuInvalidURLError::register(py, m)?;
     QiniuInvalidStatusCodeError::register(py, m)?;
@@ -199,6 +203,12 @@ create_exception!(
     QiniuInvalidLimitation,
     PyValueError,
     "七牛分片限制错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuInvalidSourceKeyLengthError,
+    PyValueError,
+    "七牛数据源 KEY 长度错误"
 );
 create_exception_with_info!(
     qiniu_sdk_bindings,
