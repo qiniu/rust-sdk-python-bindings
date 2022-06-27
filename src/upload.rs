@@ -5,17 +5,26 @@ use super::{
         QiniuInvalidObjectSize, QiniuInvalidPartSize, QiniuInvalidSourceKeyLengthError,
         QiniuIoError,
     },
-    http_client::RegionsProvider,
+    http_client::{
+        BucketRegionsQueryer, Endpoints, HttpClient, RegionsProvider, RequestBuilderPartsRef,
+    },
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
     utils::{
         convert_api_call_error, convert_json_value_to_py_object, parse_mime, AsyncReader,
         PythonIoBase, Reader,
     },
 };
+use anyhow::Result as AnyResult;
 use futures::{lock::Mutex as AsyncMutex, AsyncReadExt, AsyncWriteExt};
 use maybe_owned::MaybeOwned;
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
-use qiniu_sdk::{etag::GenericArray, prelude::SinglePartUploader};
+use qiniu_sdk::{
+    etag::GenericArray,
+    prelude::{
+        AsyncReset, InitializedParts, MultiPartsUploader, MultiPartsUploaderSchedulerExt, Reset,
+        SinglePartUploader, UploadedPart,
+    },
+};
 use sha1::{digest::OutputSizeUser, Sha1};
 use std::{collections::HashMap, io::Read, num::NonZeroU64, sync::Arc, time::Duration};
 
@@ -42,6 +51,29 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<AppendOnlyAsyncResumableRecorderMedium>()?;
     m.add_class::<DummyResumableRecorder>()?;
     m.add_class::<FileSystemResumableRecorder>()?;
+    m.add_class::<DataSource>()?;
+    m.add_class::<FileDataSource>()?;
+    m.add_class::<UnseekableDataSource>()?;
+    m.add_class::<AsyncDataSource>()?;
+    m.add_class::<AsyncFileDataSource>()?;
+    m.add_class::<AsyncUnseekableDataSource>()?;
+    m.add_class::<DataSourceReader>()?;
+    m.add_class::<AsyncDataSourceReader>()?;
+    m.add_class::<UploadManager>()?;
+    m.add_class::<FormUploader>()?;
+    m.add_class::<MultiPartsV1Uploader>()?;
+    m.add_class::<MultiPartsV1UploaderInitializedObject>()?;
+    m.add_class::<AsyncMultiPartsV1UploaderInitializedObject>()?;
+    m.add_class::<MultiPartsV1UploaderUploadedPart>()?;
+    m.add_class::<AsyncMultiPartsV1UploaderUploadedPart>()?;
+    m.add_class::<MultiPartsV2Uploader>()?;
+    m.add_class::<MultiPartsV2UploaderInitializedObject>()?;
+    m.add_class::<AsyncMultiPartsV2UploaderInitializedObject>()?;
+    m.add_class::<MultiPartsV2UploaderUploadedPart>()?;
+    m.add_class::<AsyncMultiPartsV2UploaderUploadedPart>()?;
+    m.add_class::<MultiPartsUploaderScheduler>()?;
+    m.add_class::<SerialMultiPartsUploaderScheduler>()?;
+    m.add_class::<ConcurrentMultiPartsUploaderScheduler>()?;
     Ok(m)
 }
 
@@ -115,6 +147,7 @@ impl ConcurrencyProvider {
         object_size: u64,
         elapsed_ns: u64,
         error: Option<&QiniuApiCallError>,
+        py: Python<'_>,
     ) -> PyResult<()> {
         let concurrency = qiniu_sdk::upload::Concurrency::new(concurrency).map_or_else(
             || Err(QiniuInvalidConcurrency::new_err("Invalid concurrency")),
@@ -134,7 +167,10 @@ impl ConcurrencyProvider {
         if let Some(error) = &error {
             feedback_builder.error(error.as_ref());
         }
-        self.0.feedback(feedback_builder.build());
+        let feedback = feedback_builder.build();
+        py.allow_threads(|| {
+            self.0.feedback(feedback);
+        });
         Ok(())
     }
 
@@ -198,6 +234,7 @@ impl DataPartitionProvider {
         part_size: u64,
         elapsed_ns: u64,
         error: Option<&QiniuApiCallError>,
+        py: Python<'_>,
     ) -> PyResult<()> {
         let part_size = qiniu_sdk::upload::PartSize::new(part_size).map_or_else(
             || Err(QiniuInvalidPartSize::new_err("Invalid part size")),
@@ -214,7 +251,10 @@ impl DataPartitionProvider {
         if let Some(error) = &error {
             feedback_builder.error(error.as_ref());
         }
-        self.0.feedback(feedback_builder.build());
+        let feedback = feedback_builder.build();
+        py.allow_threads(|| {
+            self.0.feedback(feedback);
+        });
         Ok(())
     }
 }
@@ -361,21 +401,29 @@ struct ResumablePolicyProvider(Box<dyn qiniu_sdk::upload::ResumablePolicyProvide
 impl ResumablePolicyProvider {
     /// 通过数据源大小获取可恢复策略
     #[pyo3(text_signature = "(source_size)")]
-    fn get_policy_from_size(&self, source_size: u64) -> ResumablePolicy {
-        self.0
-            .get_policy_from_size(source_size, Default::default())
-            .into()
+    fn get_policy_from_size(&self, source_size: u64, py: Python<'_>) -> ResumablePolicy {
+        py.allow_threads(|| {
+            self.0
+                .get_policy_from_size(source_size, Default::default())
+                .into()
+        })
     }
 
     /// 通过输入流获取可恢复策略
     ///
     /// 返回选择的可恢复策略，以及经过更新的输入流
     #[pyo3(text_signature = "(reader)")]
-    fn get_policy_from_reader(&self, reader: PyObject) -> PyResult<(ResumablePolicy, Reader)> {
-        self.0
-            .get_policy_from_reader(Box::new(PythonIoBase::new(reader)), Default::default())
-            .map(|(policy, reader)| (policy.into(), reader.into()))
-            .map_err(QiniuIoError::from_err)
+    fn get_policy_from_reader(
+        &self,
+        reader: PyObject,
+        py: Python<'_>,
+    ) -> PyResult<(ResumablePolicy, Reader)> {
+        py.allow_threads(|| {
+            self.0
+                .get_policy_from_reader(Box::new(PythonIoBase::new(reader)), Default::default())
+                .map(|(policy, reader)| (policy.into(), reader.into()))
+                .map_err(QiniuIoError::from_err)
+        })
     }
 
     /// 通过异步输入流获取可恢复策略
@@ -523,20 +571,21 @@ impl SourceKey {
     }
 }
 
-/// 断点恢复记录器
-#[pyclass(subclass)]
-#[derive(Clone, Debug)]
-struct ResumableRecorder(Box<dyn qiniu_sdk::upload::ResumableRecorder<HashAlgorithm = Sha1>>);
-
 #[pymethods]
 impl ResumableRecorder {
     /// 根据数据源 KEY 打开只读记录介质
     #[pyo3(text_signature = "($self, source_key)")]
-    fn open_for_read(&self, source_key: &SourceKey) -> PyResult<ReadOnlyResumableRecorderMedium> {
-        self.0
-            .open_for_read(&source_key.0)
-            .map(ReadOnlyResumableRecorderMedium::from)
-            .map_err(QiniuIoError::from_err)
+    fn open_for_read(
+        &self,
+        source_key: &SourceKey,
+        py: Python<'_>,
+    ) -> PyResult<ReadOnlyResumableRecorderMedium> {
+        py.allow_threads(|| {
+            self.0
+                .open_for_read(&source_key.0)
+                .map(ReadOnlyResumableRecorderMedium::from)
+                .map_err(QiniuIoError::from_err)
+        })
     }
 
     /// 根据数据源 KEY 打开追加记录介质
@@ -544,11 +593,14 @@ impl ResumableRecorder {
     fn open_for_append(
         &self,
         source_key: &SourceKey,
+        py: Python<'_>,
     ) -> PyResult<AppendOnlyResumableRecorderMedium> {
-        self.0
-            .open_for_append(&source_key.0)
-            .map(AppendOnlyResumableRecorderMedium::from)
-            .map_err(QiniuIoError::from_err)
+        py.allow_threads(|| {
+            self.0
+                .open_for_append(&source_key.0)
+                .map(AppendOnlyResumableRecorderMedium::from)
+                .map_err(QiniuIoError::from_err)
+        })
     }
 
     /// 根据数据源 KEY 创建追加记录介质
@@ -556,17 +608,20 @@ impl ResumableRecorder {
     fn open_for_create_new(
         &self,
         source_key: &SourceKey,
+        py: Python<'_>,
     ) -> PyResult<AppendOnlyResumableRecorderMedium> {
-        self.0
-            .open_for_create_new(&source_key.0)
-            .map(AppendOnlyResumableRecorderMedium::from)
-            .map_err(QiniuIoError::from_err)
+        py.allow_threads(|| {
+            self.0
+                .open_for_create_new(&source_key.0)
+                .map(AppendOnlyResumableRecorderMedium::from)
+                .map_err(QiniuIoError::from_err)
+        })
     }
 
     /// 根据数据源 KEY 删除记录介质
     #[pyo3(text_signature = "($self, source_key)")]
-    fn delete(&self, source_key: &SourceKey) -> PyResult<()> {
-        self.0.delete(&source_key.0).map_err(QiniuIoError::from_err)
+    fn delete(&self, source_key: &SourceKey, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| self.0.delete(&source_key.0).map_err(QiniuIoError::from_err))
     }
 
     /// 根据数据源 KEY 打开异步只读记录介质
@@ -641,6 +696,80 @@ impl ResumableRecorder {
     }
 }
 
+/// 断点恢复记录器
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct ResumableRecorder(Box<dyn qiniu_sdk::upload::ResumableRecorder<HashAlgorithm = Sha1>>);
+
+impl qiniu_sdk::upload::ResumableRecorder for ResumableRecorder {
+    type HashAlgorithm = Sha1;
+
+    fn open_for_read(
+        &self,
+        source_key: &qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> std::io::Result<Box<dyn qiniu_sdk::prelude::ReadOnlyResumableRecorderMedium>> {
+        self.0.open_for_read(source_key)
+    }
+
+    fn open_for_append(
+        &self,
+        source_key: &qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> std::io::Result<Box<dyn qiniu_sdk::prelude::AppendOnlyResumableRecorderMedium>> {
+        self.0.open_for_append(source_key)
+    }
+
+    fn open_for_create_new(
+        &self,
+        source_key: &qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> std::io::Result<Box<dyn qiniu_sdk::prelude::AppendOnlyResumableRecorderMedium>> {
+        self.0.open_for_create_new(source_key)
+    }
+
+    fn delete(
+        &self,
+        source_key: &qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> std::io::Result<()> {
+        self.0.delete(source_key)
+    }
+
+    fn open_for_async_read<'a>(
+        &'a self,
+        source_key: &'a qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> futures::future::BoxFuture<
+        'a,
+        std::io::Result<Box<dyn qiniu_sdk::prelude::ReadOnlyAsyncResumableRecorderMedium>>,
+    > {
+        self.0.open_for_async_read(source_key)
+    }
+
+    fn open_for_async_append<'a>(
+        &'a self,
+        source_key: &'a qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> futures::future::BoxFuture<
+        'a,
+        std::io::Result<Box<dyn qiniu_sdk::prelude::AppendOnlyAsyncResumableRecorderMedium>>,
+    > {
+        self.0.open_for_async_append(source_key)
+    }
+
+    fn open_for_async_create_new<'a>(
+        &'a self,
+        source_key: &'a qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> futures::future::BoxFuture<
+        'a,
+        std::io::Result<Box<dyn qiniu_sdk::prelude::AppendOnlyAsyncResumableRecorderMedium>>,
+    > {
+        self.0.open_for_async_create_new(source_key)
+    }
+
+    fn async_delete<'a>(
+        &'a self,
+        source_key: &'a qiniu_sdk::upload::SourceKey<Self::HashAlgorithm>,
+    ) -> futures::future::BoxFuture<'a, std::io::Result<()>> {
+        self.0.async_delete(source_key)
+    }
+}
+
 /// 只读介质接口
 #[pyclass(subclass)]
 #[derive(Debug)]
@@ -653,13 +782,15 @@ impl ReadOnlyResumableRecorderMedium {
     #[args(size = "-1")]
     fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
         let mut buf = Vec::new();
-        if let Ok(size) = u64::try_from(size) {
-            buf.reserve(size as usize);
-            (&mut self.0).take(size).read_to_end(&mut buf)
-        } else {
-            self.0.read_to_end(&mut buf)
-        }
-        .map_err(PyIOError::new_err)?;
+        py.allow_threads(|| {
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut self.0).take(size).read_to_end(&mut buf)
+            } else {
+                self.0.read_to_end(&mut buf)
+            }
+            .map_err(PyIOError::new_err)
+        })?;
         Ok(PyBytes::new(py, &buf))
     }
 
@@ -697,15 +828,15 @@ struct AppendOnlyResumableRecorderMedium(
 impl AppendOnlyResumableRecorderMedium {
     /// 写入所有数据
     #[pyo3(text_signature = "($self, b, /)")]
-    fn write(&mut self, b: &[u8]) -> PyResult<usize> {
-        self.0.write_all(b).map_err(PyIOError::new_err)?;
+    fn write(&mut self, b: &[u8], py: Python<'_>) -> PyResult<usize> {
+        py.allow_threads(|| self.0.write_all(b).map_err(PyIOError::new_err))?;
         Ok(b.len())
     }
 
     /// 刷新数据
     #[pyo3(text_signature = "($self)")]
-    fn flush(&mut self) -> PyResult<()> {
-        self.0.flush().map_err(PyIOError::new_err)?;
+    fn flush(&mut self, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| self.0.flush().map_err(PyIOError::new_err))?;
         Ok(())
     }
 
@@ -868,19 +999,990 @@ impl FileSystemResumableRecorder {
     }
 }
 
+macro_rules! impl_uploader {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            #[pyo3(
+                text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn upload_path(
+                &self,
+                path: &str,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'_>,
+            ) -> PyResult<PyObject> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                py.allow_threads(|| {
+                    self.0
+                        .upload_path(path, object_params)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|v| convert_json_value_to_py_object(&v))
+                })
+            }
+
+            #[pyo3(
+                text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn upload_reader(
+                &self,
+                reader: PyObject,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'_>,
+            ) -> PyResult<PyObject> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                py.allow_threads(|| {
+                    self.0
+                        .upload_reader(PythonIoBase::new(reader), object_params)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|v| convert_json_value_to_py_object(&v))
+                })
+            }
+
+            #[pyo3(
+                text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn async_upload_path<'p>(
+                &self,
+                path: String,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                let uploader = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_upload_path(&path, object_params)
+                        .await
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|v| convert_json_value_to_py_object(&v))
+                })
+            }
+
+            #[pyo3(
+                text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn async_upload_reader<'p>(
+                &self,
+                reader: PyObject,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                let uploader = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_upload_reader(PythonIoBase::new(reader).into_async_read(), object_params)
+                        .await
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|v| convert_json_value_to_py_object(&v))
+                })
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    }
+}
+
+/// 数据源接口
+///
+/// 提供上传所用的数据源
+#[pyclass(subclass)]
+#[derive(Debug, Clone)]
+struct DataSource(Box<dyn qiniu_sdk::upload::DataSource<Sha1>>);
+
+#[pymethods]
+impl DataSource {
+    /// 数据源切片
+    #[pyo3(text_signature = "($self, size)")]
+    fn slice(&self, size: u64, py: Python<'_>) -> PyResult<Option<DataSourceReader>> {
+        let part_size = qiniu_sdk::upload::PartSize::new(size).map_or_else(
+            || Err(QiniuInvalidPartSize::new_err("part_size must not be zero")),
+            Ok,
+        )?;
+        let reader = py
+            .allow_threads(|| self.0.slice(part_size))
+            .map_err(PyIOError::new_err)?
+            .map(DataSourceReader);
+        Ok(reader)
+    }
+
+    /// 获取数据源 KEY
+    ///
+    /// 用于区分不同的数据源
+    #[pyo3(text_signature = "($self)")]
+    fn source_key(&self, py: Python<'_>) -> PyResult<Option<SourceKey>> {
+        py.allow_threads(|| self.0.source_key())
+            .map(|s| s.map(SourceKey))
+            .map_err(PyIOError::new_err)
+    }
+
+    /// 获取数据源大小
+    #[pyo3(text_signature = "($self)")]
+    fn total_size(&self, py: Python<'_>) -> PyResult<Option<u64>> {
+        py.allow_threads(|| self.0.total_size())
+            .map_err(PyIOError::new_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl qiniu_sdk::upload::DataSource<Sha1> for DataSource {
+    fn slice(
+        &self,
+        size: qiniu_sdk::upload::PartSize,
+    ) -> std::io::Result<Option<qiniu_sdk::upload::DataSourceReader>> {
+        self.0.slice(size)
+    }
+
+    fn source_key(&self) -> std::io::Result<Option<qiniu_sdk::upload::SourceKey<Sha1>>> {
+        self.0.source_key()
+    }
+
+    fn total_size(&self) -> std::io::Result<Option<u64>> {
+        self.0.total_size()
+    }
+}
+
+/// 文件数据源
+///
+/// 基于一个文件实现了数据源接口
+#[pyclass(extends = DataSource)]
+#[derive(Debug, Clone, Copy)]
+struct FileDataSource;
+
+#[pymethods]
+impl FileDataSource {
+    /// 创建文件数据源
+    #[new]
+    fn new(path: &str) -> (Self, DataSource) {
+        (
+            Self,
+            DataSource(Box::new(qiniu_sdk::upload::FileDataSource::new(path))),
+        )
+    }
+}
+
+/// 不可寻址的数据源
+///
+/// 基于一个不可寻址的阅读器实现了数据源接口
+#[pyclass(extends = DataSource)]
+#[derive(Debug, Clone, Copy)]
+struct UnseekableDataSource;
+
+#[pymethods]
+impl UnseekableDataSource {
+    /// 创建不可寻址的数据源
+    #[new]
+    fn new(source: PyObject) -> (Self, DataSource) {
+        (
+            Self,
+            DataSource(Box::new(qiniu_sdk::upload::UnseekableDataSource::new(
+                PythonIoBase::new(source),
+            ))),
+        )
+    }
+}
+
+/// 异步数据源接口
+///
+/// 提供上传所用的数据源
+#[pyclass(subclass)]
+#[derive(Debug, Clone)]
+struct AsyncDataSource(Box<dyn qiniu_sdk::upload::AsyncDataSource<Sha1>>);
+
+#[pymethods]
+impl AsyncDataSource {
+    /// 异步数据源切片
+    #[pyo3(text_signature = "($self, size)")]
+    fn slice<'p>(&self, size: u64, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let part_size = qiniu_sdk::upload::PartSize::new(size).map_or_else(
+            || Err(QiniuInvalidPartSize::new_err("part_size must not be zero")),
+            Ok,
+        )?;
+        let source = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            source
+                .slice(part_size)
+                .await
+                .map(|r| r.map(|r| AsyncDataSourceReader(Arc::new(AsyncMutex::new(r)))))
+                .map_err(PyIOError::new_err)
+        })
+    }
+
+    /// 异步获取数据源 KEY
+    ///
+    /// 用于区分不同的数据源
+    #[pyo3(text_signature = "($self)")]
+    fn source_key<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let source = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            source
+                .source_key()
+                .await
+                .map_err(PyIOError::new_err)
+                .map(|k| k.map(SourceKey))
+        })
+    }
+
+    /// 异步获取数据源大小
+    #[pyo3(text_signature = "($self)")]
+    fn total_size<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let source = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            source.total_size().await.map_err(PyIOError::new_err)
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl qiniu_sdk::upload::AsyncDataSource<Sha1> for AsyncDataSource {
+    fn slice(
+        &self,
+        size: qiniu_sdk::upload::PartSize,
+    ) -> futures::future::BoxFuture<std::io::Result<Option<qiniu_sdk::upload::AsyncDataSourceReader>>>
+    {
+        self.0.slice(size)
+    }
+
+    fn source_key(
+        &self,
+    ) -> futures::future::BoxFuture<std::io::Result<Option<qiniu_sdk::upload::SourceKey<Sha1>>>>
+    {
+        self.0.source_key()
+    }
+
+    fn total_size(&self) -> futures::future::BoxFuture<std::io::Result<Option<u64>>> {
+        self.0.total_size()
+    }
+}
+
+/// 异步文件数据源
+///
+/// 基于一个文件实现了数据源接口
+#[pyclass(extends = AsyncDataSource)]
+#[derive(Debug, Clone, Copy)]
+struct AsyncFileDataSource;
+
+#[pymethods]
+impl AsyncFileDataSource {
+    /// 创建异步文件数据源
+    #[new]
+    fn new(path: &str) -> (Self, AsyncDataSource) {
+        (
+            Self,
+            AsyncDataSource(Box::new(qiniu_sdk::upload::AsyncFileDataSource::new(path))),
+        )
+    }
+}
+
+/// 不可寻址的异步数据源
+///
+/// 基于一个不可寻址的异步阅读器实现了异步数据源接口
+#[pyclass(extends = AsyncDataSource)]
+#[derive(Debug, Clone, Copy)]
+struct AsyncUnseekableDataSource;
+
+#[pymethods]
+impl AsyncUnseekableDataSource {
+    /// 创建不可寻址的异步数据源
+    #[new]
+    fn new(source: PyObject) -> (Self, AsyncDataSource) {
+        (
+            Self,
+            AsyncDataSource(Box::new(qiniu_sdk::upload::AsyncUnseekableDataSource::new(
+                PythonIoBase::new(source).into_async_read(),
+            ))),
+        )
+    }
+}
+
+/// 追加介质接口
+#[pyclass]
+#[derive(Debug)]
+struct DataSourceReader(qiniu_sdk::upload::DataSourceReader);
+
+#[pymethods]
+impl DataSourceReader {
+    /// 读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        let mut buf = Vec::new();
+        py.allow_threads(|| {
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut self.0).take(size).read_to_end(&mut buf)
+            } else {
+                self.0.read_to_end(&mut buf)
+            }
+            .map_err(PyIOError::new_err)
+        })?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// 读取所有响应体数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        self.read(-1, py)
+    }
+
+    /// 从头读取数据
+    #[pyo3(text_signature = "($self)")]
+    fn reset(&mut self, py: Python<'_>) -> PyResult<()> {
+        py.allow_threads(|| self.0.reset())
+            .map_err(PyIOError::new_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// 异步只读介质接口
+#[pyclass]
+#[derive(Debug)]
+struct AsyncDataSourceReader(Arc<AsyncMutex<qiniu_sdk::upload::AsyncDataSourceReader>>);
+
+#[pymethods]
+impl AsyncDataSourceReader {
+    /// 异步读取响应体数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut *reader).take(size).read_to_end(&mut buf).await
+            } else {
+                reader.read_to_end(&mut buf).await
+            }
+            .map_err(PyIOError::new_err)?;
+            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
+        })
+    }
+
+    /// 异步所有读取响应体数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        self.read(-1, py)
+    }
+
+    /// 从头读取数据
+    #[pyo3(text_signature = "($self)")]
+    fn reset<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            reader
+                .lock()
+                .await
+                .reset()
+                .await
+                .map_err(PyIOError::new_err)
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// 上传管理器
+#[pyclass]
+#[derive(Debug, Clone)]
+#[pyo3(
+    text_signature = "(signer, http_client = None, use_https = None, queryer = None, uc_endpoints = None)"
+)]
+struct UploadManager(qiniu_sdk::upload::UploadManager);
+
+#[pymethods]
+impl UploadManager {
+    /// 创建上传管理器
+    #[new]
+    #[args(
+        http_client = "None",
+        use_https = "None",
+        queryer = "None",
+        uc_endpoints = "None"
+    )]
+    fn new(
+        signer: UploadTokenSigner,
+        http_client: Option<HttpClient>,
+        use_https: Option<bool>,
+        queryer: Option<BucketRegionsQueryer>,
+        uc_endpoints: Option<Endpoints>,
+    ) -> Self {
+        let mut builder = qiniu_sdk::upload::UploadManager::builder(signer.0);
+        if let Some(http_client) = http_client {
+            builder.http_client(http_client.into());
+        }
+        if let Some(use_https) = use_https {
+            builder.use_https(use_https);
+        }
+        if let Some(queryer) = queryer {
+            builder.queryer(queryer.into());
+        }
+        if let Some(uc_endpoints) = uc_endpoints {
+            builder.uc_endpoints(uc_endpoints);
+        }
+        Self(builder.build())
+    }
+
+    /// 创建表单上传器
+    #[pyo3(text_signature = "($self)")]
+    fn form_uploader(&self) -> FormUploader {
+        FormUploader(self.0.form_uploader())
+    }
+
+    /// 创建分片上传器 V1
+    #[pyo3(text_signature = "($self, resumable_recorder)")]
+    fn multi_parts_v1_uploader(
+        &self,
+        resumable_recorder: ResumableRecorder,
+    ) -> MultiPartsV1Uploader {
+        MultiPartsV1Uploader(self.0.multi_parts_v1_uploader(resumable_recorder))
+    }
+
+    /// 创建分片上传器 V2
+    #[pyo3(text_signature = "($self, resumable_recorder)")]
+    fn multi_parts_v2_uploader(
+        &self,
+        resumable_recorder: ResumableRecorder,
+    ) -> MultiPartsV2Uploader {
+        MultiPartsV2Uploader(self.0.multi_parts_v2_uploader(resumable_recorder))
+    }
+}
+
 /// 表单上传器
 ///
 /// 通过七牛表单上传 API 一次上传整个数据流
 #[pyclass]
 #[derive(Debug, Clone)]
-struct FormUploader(Arc<qiniu_sdk::upload::FormUploader>);
+struct FormUploader(qiniu_sdk::upload::FormUploader);
+
+impl_uploader!(FormUploader);
+
+macro_rules! impl_multi_parts_uploader {
+    ($name:ident, $initialized_parts:ident, $async_initialize_parts:ident, $uploaded_part:ident, $async_uploaded_part:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 初始化分片信息
+            ///
+            /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
+            #[pyo3(
+                text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn initialize_parts(
+                &self,
+                source: DataSource,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'_>,
+            ) -> PyResult<$initialized_parts> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                py.allow_threads(|| {
+                    self.0
+                        .initialize_parts(source, object_params)
+                        .map($initialized_parts)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 上传分片
+            ///
+            /// 实际上传的分片大小由提供的分片大小提供者获取。
+            ///
+            /// 如果返回 `None` 则表示已经没有更多分片可以上传。
+            #[pyo3(text_signature = "($self, initialized, data_partitioner_provider)")]
+            fn upload_part(
+                &self,
+                initialized: &$initialized_parts,
+                data_partitioner_provider: &DataPartitionProvider,
+                py: Python<'_>,
+            ) -> PyResult<Option<$uploaded_part>> {
+                py.allow_threads(|| {
+                    self.0
+                        .upload_part(&initialized.0, data_partitioner_provider)
+                        .map(|p| p.map($uploaded_part))
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 完成分片上传
+            ///
+            /// 在这步成功返回后，对象即可被读取。
+            #[pyo3(text_signature = "($self, initialized, parts)")]
+            fn complete_part(
+                &self,
+                initialized: &$initialized_parts,
+                parts: Vec<$uploaded_part>,
+                py: Python<'_>,
+            ) -> PyResult<PyObject> {
+                py.allow_threads(|| {
+                    self.0
+                        .complete_parts(
+                            &initialized.0,
+                            &parts.into_iter().map(|part| part.0).collect::<Vec<_>>(),
+                        )
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|s| convert_json_value_to_py_object(&s))
+                })
+            }
+
+            /// 异步初始化分片信息
+            ///
+            /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
+            #[pyo3(
+                text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+            )]
+            #[args(
+                region_provider = "None",
+                object_name = "None",
+                file_name = "None",
+                content_type = "None",
+                metadata = "None",
+                custom_vars = "None",
+                uploaded_part_ttl_secs = "None"
+            )]
+            #[allow(clippy::too_many_arguments)]
+            fn async_initialize_parts<'p>(
+                &self,
+                source: AsyncDataSource,
+                region_provider: Option<RegionsProvider>,
+                object_name: Option<&str>,
+                file_name: Option<&str>,
+                content_type: Option<&str>,
+                metadata: Option<HashMap<String, String>>,
+                custom_vars: Option<HashMap<String, String>>,
+                uploaded_part_ttl_secs: Option<u64>,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let object_params = make_object_params(
+                    region_provider,
+                    object_name,
+                    file_name,
+                    content_type,
+                    metadata,
+                    custom_vars,
+                    uploaded_part_ttl_secs,
+                )?;
+                let uploader = self.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_initialize_parts(source, object_params)
+                        .await
+                        .map(|obj| $async_initialize_parts(Arc::new(obj)))
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 异步上传分片
+            ///
+            /// 实际上传的分片大小由提供的分片大小提供者获取。
+            ///
+            /// 如果返回 `None` 则表示已经没有更多分片可以上传。
+            #[pyo3(text_signature = "($self, initialized, data_partitioner_provider)")]
+            fn async_upload_part<'p>(
+                &self,
+                initialized: &$async_initialize_parts,
+                data_partitioner_provider: &DataPartitionProvider,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let uploader = self.0.to_owned();
+                let initialized = initialized.0.to_owned();
+                let data_partitioner_provider = data_partitioner_provider.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_upload_part(&initialized, &data_partitioner_provider)
+                        .await
+                        .map(|p| p.map($async_uploaded_part))
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 异步完成分片上传
+            ///
+            /// 在这步成功返回后，对象即可被读取。
+            #[pyo3(text_signature = "($self, initialized, parts)")]
+            fn async_complete_part<'p>(
+                &'p self,
+                initialized: &'p $async_initialize_parts,
+                parts: Vec<$async_uploaded_part>,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let uploader = self.0.to_owned();
+                let initialized = initialized.0.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_complete_parts(
+                            &initialized,
+                            &parts.into_iter().map(|part| part.0).collect::<Vec<_>>(),
+                        )
+                        .await
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                        .and_then(|s| convert_json_value_to_py_object(&s))
+                })
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+/// 分片上传器 V1
+///
+/// 不推荐直接使用这个上传器，而是可以借助 `MultiPartsUploaderScheduler` 来方便地实现分片上传。
+#[pyclass]
+#[derive(Debug, Clone)]
+struct MultiPartsV1Uploader(qiniu_sdk::upload::MultiPartsV1Uploader);
+
+impl_multi_parts_uploader!(
+    MultiPartsV1Uploader,
+    MultiPartsV1UploaderInitializedObject,
+    AsyncMultiPartsV1UploaderInitializedObject,
+    MultiPartsV1UploaderUploadedPart,
+    AsyncMultiPartsV1UploaderUploadedPart
+);
+
+/// 分片上传器 V2
+///
+/// 不推荐直接使用这个上传器，而是可以借助 `MultiPartsUploaderScheduler` 来方便地实现分片上传。
+#[pyclass]
+#[derive(Debug, Clone)]
+struct MultiPartsV2Uploader(qiniu_sdk::upload::MultiPartsV2Uploader);
+
+impl_multi_parts_uploader!(
+    MultiPartsV2Uploader,
+    MultiPartsV2UploaderInitializedObject,
+    AsyncMultiPartsV2UploaderInitializedObject,
+    MultiPartsV2UploaderUploadedPart,
+    AsyncMultiPartsV2UploaderUploadedPart
+);
+
+macro_rules! impl_initialized_object {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 获取对象名称
+            #[getter]
+            fn get_object_name(&self) -> Option<&str> {
+                self.0.params().object_name()
+            }
+
+            /// 获取文件名称
+            #[getter]
+            fn get_file_name(&self) -> Option<&str> {
+                self.0.params().file_name()
+            }
+
+            /// 获取 MIME 类型
+            #[getter]
+            fn get_content_type(&self) -> Option<&str> {
+                self.0.params().content_type().map(|s| s.as_ref())
+            }
+
+            /// 获取对象元信息
+            #[getter]
+            fn get_metadata(&self) -> HashMap<String, String> {
+                self.0.params().metadata().to_owned()
+            }
+
+            /// 获取对象自定义变量
+            #[getter]
+            fn get_custom_vars(&self) -> HashMap<String, String> {
+                self.0.params().custom_vars().to_owned()
+            }
+
+            /// 获取分片上传后的有效期
+            #[getter]
+            fn get_uploaded_part_ttl_secs(&self) -> u64 {
+                self.0.params().uploaded_part_ttl().as_secs()
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+/// 被 分片上传器 V1 初始化的分片信息
+#[pyclass]
+struct MultiPartsV1UploaderInitializedObject(
+    <qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::InitializedParts,
+);
+impl_initialized_object!(MultiPartsV1UploaderInitializedObject);
+
+/// 被 分片上传器 V1 异步初始化的分片信息
+#[pyclass]
+#[derive(Clone)]
+struct AsyncMultiPartsV1UploaderInitializedObject(
+    Arc<<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>,
+);
+impl_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
+
+/// 被 分片上传器 V2 初始化的分片信息
+#[pyclass]
+struct MultiPartsV2UploaderInitializedObject(
+    <qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::InitializedParts,
+);
+impl_initialized_object!(MultiPartsV2UploaderInitializedObject);
+
+/// 被 分片上传器 V2 异步初始化的分片信息
+#[pyclass]
+#[derive(Clone)]
+struct AsyncMultiPartsV2UploaderInitializedObject(
+    Arc<<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>,
+);
+impl_initialized_object!(AsyncMultiPartsV2UploaderInitializedObject);
+
+macro_rules! impl_uploaded_part {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 分片大小
+            #[getter]
+            fn get_size(&self) -> u64 {
+                self.0.size().get()
+            }
+
+            /// 分片偏移量
+            #[getter]
+            fn get_offset(&self) -> u64 {
+                self.0.offset()
+            }
+
+            /// 是否来自于断点恢复
+            #[getter]
+            fn get_resumed(&self) -> bool {
+                self.0.resumed()
+            }
+
+            /// 获取响应体
+            #[getter]
+            fn get_response_body(&self) -> PyResult<PyObject> {
+                convert_json_value_to_py_object(self.0.response_body().as_ref())
+            }
+
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+/// 已经通过 分片上传器 V1 上传的分片信息
+#[pyclass]
+#[derive(Clone, Debug)]
+struct MultiPartsV1UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::UploadedPart);
+impl_uploaded_part!(MultiPartsV1UploaderUploadedPart);
+
+/// 已经通过 分片上传器 V1 异步上传的分片信息
+#[pyclass]
+#[derive(Clone, Debug)]
+struct AsyncMultiPartsV1UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncUploadedPart);
+impl_uploaded_part!(AsyncMultiPartsV1UploaderUploadedPart);
+
+/// 已经通过 分片上传器 V2 上传的分片信息
+#[pyclass]
+#[derive(Clone, Debug)]
+struct MultiPartsV2UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::UploadedPart);
+impl_uploaded_part!(MultiPartsV2UploaderUploadedPart);
+
+/// 已经通过 分片上传器 V2 异步上传的分片信息
+#[pyclass]
+#[derive(Clone, Debug)]
+struct AsyncMultiPartsV2UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncUploadedPart);
+impl_uploaded_part!(AsyncMultiPartsV2UploaderUploadedPart);
+
+/// 分片上传调度器接口
+///
+/// 负责分片上传的调度，包括初始化分片信息、上传分片、完成分片上传。
+#[pyclass(subclass)]
+#[derive(Debug, Clone)]
+struct MultiPartsUploaderScheduler(Box<dyn qiniu_sdk::upload::MultiPartsUploaderScheduler<Sha1>>);
 
 #[pymethods]
-impl FormUploader {
-    // TODO: constructor
+impl MultiPartsUploaderScheduler {
+    /// 设置并发数提供者
+    #[setter]
+    fn set_concurrency_provider(&mut self, concurrency_provider: ConcurrencyProvider) {
+        self.0.set_concurrency_provider(concurrency_provider.0);
+    }
 
+    /// 设置分片大小提供者
+    #[setter]
+    fn set_data_partition_provider(&mut self, data_partition_provider: DataPartitionProvider) {
+        self.0
+            .set_data_partition_provider(data_partition_provider.0);
+    }
+
+    /// 上传数据源
     #[pyo3(
-        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
     )]
     #[args(
         region_provider = "None",
@@ -892,9 +1994,9 @@ impl FormUploader {
         uploaded_part_ttl_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
-    fn upload_path(
+    fn upload(
         &self,
-        path: &str,
+        source: DataSource,
         region_provider: Option<RegionsProvider>,
         object_name: Option<&str>,
         file_name: Option<&str>,
@@ -902,6 +2004,7 @@ impl FormUploader {
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
         uploaded_part_ttl_secs: Option<u64>,
+        py: Python<'_>,
     ) -> PyResult<PyObject> {
         let object_params = make_object_params(
             region_provider,
@@ -912,14 +2015,17 @@ impl FormUploader {
             custom_vars,
             uploaded_part_ttl_secs,
         )?;
-        self.0
-            .upload_path(path, object_params)
-            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
-            .and_then(|v| convert_json_value_to_py_object(&v))
+        py.allow_threads(|| {
+            self.0
+                .upload(source.0, object_params)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
     }
 
+    /// 异步上传数据源
     #[pyo3(
-        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
     )]
     #[args(
         region_provider = "None",
@@ -931,48 +2037,9 @@ impl FormUploader {
         uploaded_part_ttl_secs = "None"
     )]
     #[allow(clippy::too_many_arguments)]
-    fn upload_reader(
-        &self,
-        reader: PyObject,
-        region_provider: Option<RegionsProvider>,
-        object_name: Option<&str>,
-        file_name: Option<&str>,
-        content_type: Option<&str>,
-        metadata: Option<HashMap<String, String>>,
-        custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
-    ) -> PyResult<PyObject> {
-        let object_params = make_object_params(
-            region_provider,
-            object_name,
-            file_name,
-            content_type,
-            metadata,
-            custom_vars,
-            uploaded_part_ttl_secs,
-        )?;
-        self.0
-            .upload_reader(PythonIoBase::new(reader), object_params)
-            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
-            .and_then(|v| convert_json_value_to_py_object(&v))
-    }
-
-    #[pyo3(
-        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
-    )]
-    #[args(
-        region_provider = "None",
-        object_name = "None",
-        file_name = "None",
-        content_type = "None",
-        metadata = "None",
-        custom_vars = "None",
-        uploaded_part_ttl_secs = "None"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn async_upload_path<'p>(
-        &self,
-        path: String,
+    fn async_upload<'p>(
+        &'p self,
+        source: AsyncDataSource,
         region_provider: Option<RegionsProvider>,
         object_name: Option<&str>,
         file_name: Option<&str>,
@@ -982,6 +2049,7 @@ impl FormUploader {
         uploaded_part_ttl_secs: Option<u64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
+        let scheduler = self.0.to_owned();
         let object_params = make_object_params(
             region_provider,
             object_name,
@@ -991,58 +2059,64 @@ impl FormUploader {
             custom_vars,
             uploaded_part_ttl_secs,
         )?;
-        let uploader = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
-            uploader
-                .async_upload_path(&path, object_params)
+            scheduler
+                .async_upload(source.0, object_params)
                 .await
                 .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                 .and_then(|v| convert_json_value_to_py_object(&v))
         })
     }
+}
+impl_uploader!(MultiPartsUploaderScheduler);
 
-    #[pyo3(
-        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
-    )]
-    #[args(
-        region_provider = "None",
-        object_name = "None",
-        file_name = "None",
-        content_type = "None",
-        metadata = "None",
-        custom_vars = "None",
-        uploaded_part_ttl_secs = "None"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn async_upload_reader<'p>(
-        &self,
-        reader: PyObject,
-        region_provider: Option<RegionsProvider>,
-        object_name: Option<&str>,
-        file_name: Option<&str>,
-        content_type: Option<&str>,
-        metadata: Option<HashMap<String, String>>,
-        custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
-        py: Python<'p>,
-    ) -> PyResult<&'p PyAny> {
-        let object_params = make_object_params(
-            region_provider,
-            object_name,
-            file_name,
-            content_type,
-            metadata,
-            custom_vars,
-            uploaded_part_ttl_secs,
-        )?;
-        let uploader = self.0.to_owned();
-        pyo3_asyncio::async_std::future_into_py(py, async move {
-            uploader
-                .async_upload_reader(PythonIoBase::new(reader).into_async_read(), object_params)
-                .await
-                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
-                .and_then(|v| convert_json_value_to_py_object(&v))
-        })
+/// 串行分片上传调度器
+///
+/// 不启动任何线程，仅在本地串行上传分片。
+#[pyclass(extends = MultiPartsUploaderScheduler)]
+#[derive(Debug, Copy, Clone)]
+struct SerialMultiPartsUploaderScheduler;
+
+#[pymethods]
+impl SerialMultiPartsUploaderScheduler {
+    /// 创建串行分片上传调度器
+    #[new]
+    fn new(uploader: PyObject, py: Python<'_>) -> PyResult<(Self, MultiPartsUploaderScheduler)> {
+        let scheduler = if let Ok(uploader_v1) = uploader.extract::<MultiPartsV1Uploader>(py) {
+            Box::new(qiniu_sdk::upload::SerialMultiPartsUploaderScheduler::new(
+                uploader_v1.0,
+            )) as Box<dyn qiniu_sdk::upload::MultiPartsUploaderScheduler<Sha1>>
+        } else {
+            let uploader_v2 = uploader.extract::<MultiPartsV2Uploader>(py)?;
+            Box::new(qiniu_sdk::upload::SerialMultiPartsUploaderScheduler::new(
+                uploader_v2.0,
+            )) as Box<dyn qiniu_sdk::upload::MultiPartsUploaderScheduler<Sha1>>
+        };
+        Ok((Self, MultiPartsUploaderScheduler(scheduler)))
+    }
+}
+
+/// 并行分片上传调度器
+///
+/// 在阻塞模式下创建线程池负责上传分片，在异步模式下使用 `async-std` 的线程池负责上传分片。
+#[pyclass(extends = MultiPartsUploaderScheduler)]
+#[derive(Debug, Copy, Clone)]
+struct ConcurrentMultiPartsUploaderScheduler;
+
+#[pymethods]
+impl ConcurrentMultiPartsUploaderScheduler {
+    /// 创建串行分片上传调度器
+    #[new]
+    fn new(uploader: PyObject, py: Python<'_>) -> PyResult<(Self, MultiPartsUploaderScheduler)> {
+        let scheduler = if let Ok(uploader_v1) = uploader.extract::<MultiPartsV1Uploader>(py) {
+            Box::new(qiniu_sdk::upload::ConcurrentMultiPartsUploaderScheduler::new(uploader_v1.0))
+                as Box<dyn qiniu_sdk::upload::MultiPartsUploaderScheduler<Sha1>>
+        } else {
+            let uploader_v2 = uploader.extract::<MultiPartsV2Uploader>(py)?;
+            Box::new(qiniu_sdk::upload::ConcurrentMultiPartsUploaderScheduler::new(uploader_v2.0))
+                as Box<dyn qiniu_sdk::upload::MultiPartsUploaderScheduler<Sha1>>
+        };
+        Ok((Self, MultiPartsUploaderScheduler(scheduler)))
     }
 }
 
@@ -1078,4 +2152,80 @@ fn make_object_params(
         builder.uploaded_part_ttl(Duration::from_secs(uploaded_part_ttl_secs));
     }
     Ok(builder.build())
+}
+
+fn before_request_callback(
+    callback: PyObject,
+) -> impl FnMut(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()>
+       + Send
+       + Sync
+       + 'static {
+    move |parts| {
+        Python::with_gil(|py| callback.call1(py, (RequestBuilderPartsRef::new(parts),)))?;
+        Ok(())
+    }
+}
+
+/// 上传进度信息
+#[pyclass]
+#[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
+#[derive(Clone, Copy, Debug)]
+struct UploadingProgressInfo(qiniu_sdk::upload::UploadingProgressInfo);
+
+#[pymethods]
+impl UploadingProgressInfo {
+    #[new]
+    pub(super) fn new(transferred_bytes: u64, total_bytes: Option<u64>) -> Self {
+        Self(qiniu_sdk::upload::UploadingProgressInfo::new(
+            transferred_bytes,
+            total_bytes,
+        ))
+    }
+
+    /// 获取已经传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_transferred_bytes(&self) -> u64 {
+        self.0.transferred_bytes()
+    }
+
+    /// 获取总共需要传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_total_bytes(&self) -> Option<u64> {
+        self.0.total_bytes()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl ToPyObject for UploadingProgressInfo {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        self.to_owned().into_py(py)
+    }
+}
+
+fn on_uploading_progress(
+    callback: PyObject,
+) -> impl Fn(&qiniu_sdk::upload::UploadingProgressInfo) -> AnyResult<()> + Send + Sync + 'static {
+    move |progress| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (UploadingProgressInfo::new(
+                    progress.transferred_bytes(),
+                    progress.total_bytes(),
+                ),),
+            )
+        })?;
+        Ok(())
+    }
 }

@@ -532,6 +532,18 @@ impl RegionsProvider {
     }
 }
 
+impl From<Box<dyn qiniu_sdk::http_client::RegionsProvider>> for RegionsProvider {
+    fn from(provider: Box<dyn qiniu_sdk::http_client::RegionsProvider>) -> Self {
+        RegionsProvider(provider)
+    }
+}
+
+impl From<RegionsProvider> for Box<dyn qiniu_sdk::http_client::RegionsProvider> {
+    fn from(provider: RegionsProvider) -> Self {
+        provider.0
+    }
+}
+
 /// 七牛存储区域
 ///
 /// 提供七牛不同服务的终端地址列表

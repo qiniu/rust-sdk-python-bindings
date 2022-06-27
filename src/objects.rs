@@ -1,7 +1,7 @@
 use super::{
     credential::CredentialProvider,
     exceptions::QiniuApiCallError,
-    http::{HttpResponseParts, HttpResponsePartsContext},
+    http::{HttpResponseParts, HttpResponsePartsMut},
     http_client::{
         BucketRegionsQueryer, Endpoints, HttpClient, JsonResponse, RegionsProvider,
         RequestBuilderPartsRef,
@@ -1031,7 +1031,7 @@ fn make_after_response_ok_callback(
     callback: PyObject,
 ) -> impl FnMut(&mut qiniu_sdk::http::ResponseParts) -> AnyResult<()> + Send + Sync + 'static {
     move |parts| {
-        Python::with_gil(|py| callback.call1(py, (HttpResponsePartsContext::new(parts),)))?;
+        Python::with_gil(|py| callback.call1(py, (HttpResponsePartsMut::from(parts),)))?;
         Ok(())
     }
 }
@@ -1156,7 +1156,7 @@ impl ObjectsIterator {
                 result.map(|entry| convert_json_value_to_py_object(&serde_json::Value::from(entry)))
             })
             .transpose()
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .transpose()
     }
 
@@ -1203,7 +1203,7 @@ impl AsyncObjectsIterator {
                 .transpose()
                 .map(|result| {
                     result
-                        .map_err(QiniuApiCallError::from_err)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                         .and_then(|res| res)
                 })
                 .transpose()?;
@@ -1347,7 +1347,7 @@ impl BatchOperationsIterator {
                 result.map(|entry| convert_json_value_to_py_object(&serde_json::Value::from(entry)))
             })
             .transpose()
-            .map_err(QiniuApiCallError::from_err)?
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
             .transpose()
     }
 
@@ -1394,7 +1394,7 @@ impl AsyncBatchOperationsIterator {
                 .transpose()
                 .map(|result| {
                     result
-                        .map_err(QiniuApiCallError::from_err)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                         .and_then(|res| res)
                 })
                 .transpose()?;

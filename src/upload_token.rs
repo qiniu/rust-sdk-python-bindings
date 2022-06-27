@@ -536,7 +536,7 @@ impl UploadPolicyBuilder {
 
 /// 上传策略构建器
 ///
-/// 该类型仅限于在回调函数中使用，一旦移除回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct UploadPolicyBuilderRef(&'static mut qiniu_sdk::upload_token::UploadPolicyBuilder);
 
