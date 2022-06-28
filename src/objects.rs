@@ -40,9 +40,10 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<ModifyObjectStatus>()?;
     m.add_class::<ModifyObjectMetadata>()?;
     m.add_class::<ModifyObjectLifeCycle>()?;
-    m.add_class::<ObjectsIterator>()?;
     m.add_class::<ListVersion>()?;
+    m.add_class::<ObjectsIterator>()?;
     m.add_class::<AsyncObjectsIterator>()?;
+    m.add_class::<BatchSizeProvider>()?;
     Ok(m)
 }
 
@@ -402,6 +403,29 @@ impl Bucket {
         Py::new(py, (modify_object_life_cycle, operation_provider))
     }
 
+    #[pyo3(
+        text_signature = "($self, before_request_callback = None, after_response_ok_callback = None)"
+    )]
+    #[args(before_request_callback = "None", after_response_ok_callback = "None")]
+    fn batch_ops(
+        &self,
+        before_request_callback: Option<PyObject>,
+        after_response_ok_callback: Option<PyObject>,
+    ) -> BatchOperations {
+        let bucket = Arc::pin(self.to_owned());
+        #[allow(unsafe_code)]
+        let mut operations = unsafe {
+            transmute::<_, qiniu_sdk::objects::BatchOperations<'static>>(bucket.0.batch_ops())
+        };
+        if let Some(callback) = before_request_callback {
+            operations.before_request_callback(make_before_request_callback(callback));
+        }
+        if let Some(callback) = after_response_ok_callback {
+            operations.after_response_ok_callback(make_after_response_ok_callback(callback));
+        }
+        BatchOperations { bucket, operations }
+    }
+
     fn __str__(&self) -> String {
         self.__repr__()
     }
@@ -500,7 +524,8 @@ impl StatObject {
         let mut builder = self.entry.bucket.0.stat_object(&self.entry.object);
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
         builder
@@ -558,7 +583,7 @@ impl CopyObject {
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
                 copy_object
-                    .before_request_callback(before_request_callback(callback.clone_ref(py)));
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
         copy_object
@@ -616,7 +641,7 @@ impl MoveObject {
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
                 move_object
-                    .before_request_callback(before_request_callback(callback.clone_ref(py)));
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
         move_object
@@ -665,7 +690,8 @@ impl DeleteObject {
 
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
 
@@ -720,7 +746,8 @@ impl UnfreezeObject {
 
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
 
@@ -775,7 +802,8 @@ impl SetObjectType {
 
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
 
@@ -830,7 +858,8 @@ impl ModifyObjectStatus {
 
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
 
@@ -892,7 +921,8 @@ impl ModifyObjectMetadata {
         }
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
         builder
@@ -960,7 +990,8 @@ impl ModifyObjectLifeCycle {
         }
         if let Some(callback) = &self.before_request_callback {
             Python::with_gil(|py| {
-                builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+                builder
+                    .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
             });
         }
         builder
@@ -976,7 +1007,7 @@ fn make_json_response(
     Py::new(py, (json, HttpResponseParts::from(parts)))
 }
 
-fn before_request_callback(
+fn make_before_request_callback(
     callback: PyObject,
 ) -> impl FnMut(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()>
        + Send
@@ -988,7 +1019,7 @@ fn before_request_callback(
     }
 }
 
-fn after_response_ok_callback(
+fn make_after_response_ok_callback(
     callback: PyObject,
 ) -> impl FnMut(&mut qiniu_sdk::http::ResponseParts) -> AnyResult<()> + Send + Sync + 'static {
     move |parts| {
@@ -1058,11 +1089,13 @@ impl ObjectsLister {
             list_builder.need_parts();
         }
         if let Some(callback) = &self.params.before_request_callback {
-            list_builder.before_request_callback(before_request_callback(callback.clone_ref(py)));
+            list_builder
+                .before_request_callback(make_before_request_callback(callback.clone_ref(py)));
         }
         if let Some(callback) = &self.params.after_response_ok_callback {
-            list_builder
-                .after_response_ok_callback(after_response_ok_callback(callback.clone_ref(py)));
+            list_builder.after_response_ok_callback(make_after_response_ok_callback(
+                callback.clone_ref(py),
+            ));
         }
         list_builder
     }
@@ -1136,18 +1169,16 @@ impl AsyncObjectsIterator {
             let entry = stream
                 .try_next()
                 .await
-                .map(
-                    |entry: Option<
-                        qiniu_sdk::objects::apis::storage::get_objects::ListedObjectEntry,
-                    >| {
-                        entry.map(|entry: qiniu_sdk::objects::apis::storage::get_objects::ListedObjectEntry| {
-                            convert_json_value_to_py_object(&serde_json::Value::from(entry))
-                        })
-                    },
-                )
+                .map(|entry| {
+                    entry.map(|entry| {
+                        convert_json_value_to_py_object(&serde_json::Value::from(entry))
+                    })
+                })
                 .transpose()
                 .map(|result| {
-                    result.map_err(QiniuApiCallError::from_err).and_then(|res| res)
+                    result
+                        .map_err(QiniuApiCallError::from_err)
+                        .and_then(|res| res)
                 })
                 .transpose()?;
             if Pin::new(&mut *stream).peek_mut().await.is_none() {
@@ -1197,5 +1228,164 @@ impl From<qiniu_sdk::objects::ListVersion> for ListVersion {
             qiniu_sdk::objects::ListVersion::V2 => ListVersion::V2,
             _ => unreachable!("Unrecognized ListVersion: {:?}", version),
         }
+    }
+}
+
+/// 最大批量操作数获取接口
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct BatchSizeProvider(Box<dyn qiniu_sdk::objects::BatchSizeProvider>);
+
+#[pymethods]
+impl BatchSizeProvider {
+    /// 创建固定的最大批量操作数
+    #[new]
+    fn new(size: usize) -> Self {
+        Self(Box::new(size))
+    }
+
+    /// 获取最大批量操作数
+    #[getter]
+    fn get_batch_size(&self) -> usize {
+        self.0.batch_size()
+    }
+}
+
+impl qiniu_sdk::objects::BatchSizeProvider for BatchSizeProvider {
+    fn batch_size(&self) -> usize {
+        self.0.batch_size()
+    }
+}
+
+/// 批量操作
+#[pyclass]
+#[derive(Debug)]
+struct BatchOperations {
+    bucket: Pin<Arc<Bucket>>,
+    operations: qiniu_sdk::objects::BatchOperations<'static>,
+}
+
+#[pymethods]
+impl BatchOperations {
+    #[setter]
+    fn set_batch_size(&mut self, size: BatchSizeProvider) {
+        self.operations.batch_size(size);
+    }
+
+    /// 添加对象操作提供者
+    #[pyo3(text_signature = "($self, operation)")]
+    fn add_operation(&mut self, operation: OperationProvider) {
+        self.operations.add_operation(operation);
+    }
+
+    fn __iter__(&mut self) -> BatchOperationsIterator {
+        BatchOperationsIterator {
+            iter: self.operations.call(),
+            _bucket: self.bucket.to_owned(),
+        }
+    }
+
+    fn __aiter__(&mut self) -> AsyncBatchOperationsIterator {
+        AsyncBatchOperationsIterator {
+            inner: Arc::new(AsyncBatchOperationsIteratorInner {
+                stream: AsyncMutex::new(self.operations.async_call().peekable()),
+                ended: AtomicBool::new(false),
+            }),
+            _bucket: self.bucket.to_owned(),
+        }
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+/// 批量操作结果迭代器
+#[pyclass]
+#[derive(Debug)]
+struct BatchOperationsIterator {
+    _bucket: Pin<Arc<Bucket>>,
+    iter: qiniu_sdk::objects::BatchOperationsIterator<'static>,
+}
+
+#[pymethods]
+impl BatchOperationsIterator {
+    fn __next__(&mut self) -> PyResult<Option<PyObject>> {
+        self.iter
+            .next()
+            .map(|result| {
+                result.map(|entry| convert_json_value_to_py_object(&serde_json::Value::from(entry)))
+            })
+            .transpose()
+            .map_err(QiniuApiCallError::from_err)?
+            .transpose()
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
+/// 异步批量操作结果迭代器
+#[pyclass]
+#[derive(Debug)]
+struct AsyncBatchOperationsIterator {
+    _bucket: Pin<Arc<Bucket>>,
+    inner: Arc<AsyncBatchOperationsIteratorInner>,
+}
+
+#[derive(Debug)]
+struct AsyncBatchOperationsIteratorInner {
+    stream: AsyncMutex<AsyncPeekable<qiniu_sdk::objects::BatchOperationsStream<'static>>>,
+    ended: AtomicBool,
+}
+
+#[pymethods]
+impl AsyncBatchOperationsIterator {
+    fn __anext__(&mut self, py: Python<'_>) -> Option<PyObject> {
+        if self.inner.ended.load(Ordering::SeqCst) {
+            return None;
+        }
+        let inner = self.inner.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut stream = inner.stream.lock().await;
+            let entry = stream
+                .try_next()
+                .await
+                .map(|entry| {
+                    entry.map(|entry| {
+                        convert_json_value_to_py_object(&serde_json::Value::from(entry))
+                    })
+                })
+                .transpose()
+                .map(|result| {
+                    result
+                        .map_err(QiniuApiCallError::from_err)
+                        .and_then(|res| res)
+                })
+                .transpose()?;
+            if Pin::new(&mut *stream).peek_mut().await.is_none() {
+                inner.ended.store(true, Ordering::SeqCst);
+            }
+            Ok(entry)
+        })
+        .ok()
+        .map(|any| any.into_py(py))
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
     }
 }

@@ -185,6 +185,52 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
         finally:
             await runner.cleanup()
 
+    async def test_objects_operation(self):
+        case = self
+
+        async def query(self):
+            return web.json_response(regions_info(), headers={'X-ReqId': 'fakereqid'})
+
+        async def batch(self):
+            data = await self.post()
+            responses = []
+            idx = 0
+            for op in data.getall('op'):
+                idx += 1
+                case.assertTrue(op.startswith('stat/'))
+                base64ed_op = op[len('stat/'):]
+                op = base64.urlsafe_b64decode(base64ed_op).decode('utf-8')
+                case.assertTrue(op.startswith('fakebucket:'))
+                key = op[len('fakebucket:'):]
+                case.assertEqual('object_%d' % idx, key)
+                responses.append(
+                    {'code': 200, 'data': {'fsize': 1024, 'hash': 'fakehash'}})
+            return web.json_response(responses, headers={'X-ReqId': 'fakereqid'})
+
+        app = web.Application()
+        app.add_routes([web.get('/v4/query', query)])
+        app.add_routes([web.post('/batch', batch)])
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '127.0.0.1', 8089)
+        await site.start()
+
+        try:
+            objects_manager = objects.ObjectsManager(credential.Credential(
+                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            bucket = objects_manager.bucket('fakebucket')
+            ops = bucket.batch_ops()
+            ops.add_operation(bucket.stat_object('object_1'))
+            ops.add_operation(bucket.stat_object('object_2'))
+            ops.add_operation(bucket.stat_object('object_3'))
+            count = 0
+            async for result in ops:
+                self.assertEqual(result, {'fsize': 1024, 'hash': 'fakehash'})
+                count += 1
+            self.assertEqual(count, 3)
+        finally:
+            await runner.cleanup()
+
 
 def regions_info():
     return {
