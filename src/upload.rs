@@ -5,6 +5,7 @@ use super::{
         QiniuInvalidObjectSize, QiniuInvalidPartSize, QiniuInvalidSourceKeyLengthError,
         QiniuIoError,
     },
+    http::HttpResponsePartsMut,
     http_client::{
         BucketRegionsQueryer, Endpoints, HttpClient, RegionsProvider, RequestBuilderPartsRef,
     },
@@ -21,12 +22,15 @@ use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
 use qiniu_sdk::{
     etag::GenericArray,
     prelude::{
-        AsyncReset, InitializedParts, MultiPartsUploader, MultiPartsUploaderSchedulerExt, Reset,
-        SinglePartUploader, UploadedPart,
+        AsyncReset, InitializedParts, MultiPartsUploader, MultiPartsUploaderSchedulerExt,
+        MultiPartsUploaderWithCallbacks, Reset, SinglePartUploader, UploadedPart,
+        UploaderWithCallbacks,
     },
 };
 use sha1::{digest::OutputSizeUser, Sha1};
-use std::{collections::HashMap, io::Read, num::NonZeroU64, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, io::Read, mem::transmute, num::NonZeroU64, sync::Arc, time::Duration,
+};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "upload")?;
@@ -74,6 +78,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<MultiPartsUploaderScheduler>()?;
     m.add_class::<SerialMultiPartsUploaderScheduler>()?;
     m.add_class::<ConcurrentMultiPartsUploaderScheduler>()?;
+    m.add_class::<UploadingProgressInfo>()?;
+    m.add_class::<UploadedPartInfo>()?;
     Ok(m)
 }
 
@@ -1555,27 +1561,115 @@ impl UploadManager {
     }
 
     /// 创建表单上传器
-    #[pyo3(text_signature = "($self)")]
-    fn form_uploader(&self) -> FormUploader {
-        FormUploader(self.0.form_uploader())
+    #[pyo3(
+        text_signature = "($self, before_request = None, upload_progress = None, response_ok = None, response_error = None)"
+    )]
+    #[args(
+        response_ok = "None",
+        response_error = "None",
+        before_backoff = "None",
+        after_backoff = "None"
+    )]
+    fn form_uploader(
+        &self,
+        before_request: Option<PyObject>,
+        upload_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> FormUploader {
+        let mut uploader = self.0.form_uploader();
+        if let Some(before_request) = before_request {
+            uploader.on_before_request(on_before_request(before_request));
+        }
+        if let Some(upload_progress) = upload_progress {
+            uploader.on_upload_progress(on_upload_progress(upload_progress));
+        }
+        if let Some(response_ok) = response_ok {
+            uploader.on_response_ok(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            uploader.on_response_error(on_error(response_error));
+        }
+        FormUploader(uploader)
     }
 
     /// 创建分片上传器 V1
-    #[pyo3(text_signature = "($self, resumable_recorder)")]
+    #[pyo3(
+        text_signature = "($self, resumable_recorder, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+    )]
+    #[args(
+        response_ok = "None",
+        response_error = "None",
+        before_backoff = "None",
+        after_backoff = "None",
+        part_uploaded = "None"
+    )]
     fn multi_parts_v1_uploader(
         &self,
         resumable_recorder: ResumableRecorder,
+        before_request: Option<PyObject>,
+        upload_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+        part_uploaded: Option<PyObject>,
     ) -> MultiPartsV1Uploader {
-        MultiPartsV1Uploader(self.0.multi_parts_v1_uploader(resumable_recorder))
+        let mut uploader = self.0.multi_parts_v1_uploader(resumable_recorder);
+        if let Some(before_request) = before_request {
+            uploader.on_before_request(on_before_request(before_request));
+        }
+        if let Some(upload_progress) = upload_progress {
+            uploader.on_upload_progress(on_upload_progress(upload_progress));
+        }
+        if let Some(response_ok) = response_ok {
+            uploader.on_response_ok(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            uploader.on_response_error(on_error(response_error));
+        }
+        if let Some(part_uploaded) = part_uploaded {
+            uploader.on_part_uploaded(on_part_uploaded(part_uploaded));
+        }
+        MultiPartsV1Uploader(uploader)
     }
 
     /// 创建分片上传器 V2
-    #[pyo3(text_signature = "($self, resumable_recorder)")]
+    #[pyo3(
+        text_signature = "($self, resumable_recorder, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+    )]
+    #[args(
+        response_ok = "None",
+        response_error = "None",
+        before_backoff = "None",
+        after_backoff = "None",
+        part_uploaded = "None"
+    )]
+
     fn multi_parts_v2_uploader(
         &self,
         resumable_recorder: ResumableRecorder,
+        before_request: Option<PyObject>,
+        upload_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+        part_uploaded: Option<PyObject>,
     ) -> MultiPartsV2Uploader {
-        MultiPartsV2Uploader(self.0.multi_parts_v2_uploader(resumable_recorder))
+        let mut uploader = self.0.multi_parts_v2_uploader(resumable_recorder);
+        if let Some(before_request) = before_request {
+            uploader.on_before_request(on_before_request(before_request));
+        }
+        if let Some(upload_progress) = upload_progress {
+            uploader.on_upload_progress(on_upload_progress(upload_progress));
+        }
+        if let Some(response_ok) = response_ok {
+            uploader.on_response_ok(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            uploader.on_response_error(on_error(response_error));
+        }
+        if let Some(part_uploaded) = part_uploaded {
+            uploader.on_part_uploaded(on_part_uploaded(part_uploaded));
+        }
+        MultiPartsV2Uploader(uploader)
     }
 }
 
@@ -2154,12 +2248,10 @@ fn make_object_params(
     Ok(builder.build())
 }
 
-fn before_request_callback(
+fn on_before_request(
     callback: PyObject,
-) -> impl FnMut(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()>
-       + Send
-       + Sync
-       + 'static {
+) -> impl Fn(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()> + Send + Sync + 'static
+{
     move |parts| {
         Python::with_gil(|py| callback.call1(py, (RequestBuilderPartsRef::new(parts),)))?;
         Ok(())
@@ -2213,7 +2305,42 @@ impl ToPyObject for UploadingProgressInfo {
     }
 }
 
-fn on_uploading_progress(
+/// 已经上传的分片信息
+#[pyclass]
+#[derive(Clone, Copy, Debug)]
+struct UploadedPartInfo {
+    size: NonZeroU64,
+    offset: u64,
+    resumed: bool,
+}
+
+#[pymethods]
+impl UploadedPartInfo {
+    #[getter]
+    fn get_size(&self) -> u64 {
+        self.size.get()
+    }
+
+    #[getter]
+    fn get_offset(&self) -> u64 {
+        self.offset
+    }
+
+    #[getter]
+    fn get_resumed(&self) -> bool {
+        self.resumed
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+fn on_upload_progress(
     callback: PyObject,
 ) -> impl Fn(&qiniu_sdk::upload::UploadingProgressInfo) -> AnyResult<()> + Send + Sync + 'static {
     move |progress| {
@@ -2226,6 +2353,43 @@ fn on_uploading_progress(
                 ),),
             )
         })?;
+        Ok(())
+    }
+}
+
+fn on_response(
+    callback: PyObject,
+) -> impl Fn(&mut qiniu_sdk::http::ResponseParts) -> AnyResult<()> + Send + Sync + 'static {
+    move |parts| {
+        let parts = HttpResponsePartsMut::from(parts);
+        Python::with_gil(|py| callback.call1(py, (parts,)))?;
+        Ok(())
+    }
+}
+
+fn on_error(
+    callback: PyObject,
+) -> impl Fn(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+    move |error| {
+        #[allow(unsafe_code)]
+        let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
+        let error = QiniuApiCallError::from_err(MaybeOwned::Borrowed(error));
+        let error = convert_api_call_error(&error)?;
+        Python::with_gil(|py| callback.call1(py, (error,)))?;
+        Ok(())
+    }
+}
+
+fn on_part_uploaded(
+    callback: PyObject,
+) -> impl Fn(&dyn UploadedPart) -> AnyResult<()> + Send + Sync + 'static {
+    move |part| {
+        let part = UploadedPartInfo {
+            size: part.size(),
+            offset: part.offset(),
+            resumed: part.resumed(),
+        };
+        Python::with_gil(|py| callback.call1(py, (part,)))?;
         Ok(())
     }
 }

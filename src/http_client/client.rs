@@ -9,7 +9,8 @@ use crate::{
     },
     http::{
         AsyncHttpRequest, AsyncHttpResponse, HttpCaller, HttpRequestParts, HttpResponseParts,
-        Metrics, SyncHttpRequest, SyncHttpResponse, TransferProgressInfo, Version,
+        HttpResponsePartsRef, Metrics, SyncHttpRequest, SyncHttpResponse, TransferProgressInfo,
+        Version,
     },
     upload_token::UploadTokenProvider,
     utils::{
@@ -2438,15 +2439,9 @@ fn on_response(
        + Sync
        + 'static {
     move |context, parts| {
-        let parts = parts.clone_without_extensions();
+        let parts = HttpResponsePartsRef::from(parts);
         Python::with_gil(|py| {
-            callback.call1(
-                py,
-                (
-                    ExtendedCallbackContextRef::new(context),
-                    HttpResponseParts::from(parts),
-                ),
-            )
+            callback.call1(py, (ExtendedCallbackContextRef::new(context), parts))
         })?;
         Ok(())
     }

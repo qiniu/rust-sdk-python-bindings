@@ -887,7 +887,7 @@ impl From<qiniu_sdk::http::ResponseParts> for HttpResponseParts {
 ///
 /// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
-struct HttpResponsePartsRef(&'static qiniu_sdk::http::ResponseParts);
+pub(super) struct HttpResponsePartsRef(&'static qiniu_sdk::http::ResponseParts);
 
 impl From<&qiniu_sdk::http::ResponseParts> for HttpResponsePartsRef {
     fn from(parts: &qiniu_sdk::http::ResponseParts) -> Self {
