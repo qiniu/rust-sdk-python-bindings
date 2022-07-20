@@ -80,6 +80,10 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<ConcurrentMultiPartsUploaderScheduler>()?;
     m.add_class::<UploadingProgressInfo>()?;
     m.add_class::<UploadedPartInfo>()?;
+    m.add_class::<MultiPartsUploaderSchedulerPrefer>()?;
+    m.add_class::<SinglePartUploaderPrefer>()?;
+    m.add_class::<MultiPartsUploaderPrefer>()?;
+    m.add_class::<AutoUploader>()?;
     Ok(m)
 }
 
@@ -460,6 +464,41 @@ impl ResumablePolicyProvider {
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.0)
+    }
+}
+
+impl qiniu_sdk::upload::ResumablePolicyProvider for ResumablePolicyProvider {
+    fn get_policy_from_size(
+        &self,
+        source_size: u64,
+        opts: qiniu_sdk::upload::GetPolicyOptions,
+    ) -> qiniu_sdk::upload::ResumablePolicy {
+        self.0.get_policy_from_size(source_size, opts)
+    }
+
+    fn get_policy_from_reader<'a>(
+        &self,
+        reader: Box<dyn qiniu_sdk::upload::DynRead + 'a>,
+        opts: qiniu_sdk::upload::GetPolicyOptions,
+    ) -> std::io::Result<(
+        qiniu_sdk::upload::ResumablePolicy,
+        Box<dyn qiniu_sdk::upload::DynRead + 'a>,
+    )> {
+        self.0.get_policy_from_reader(reader, opts)
+    }
+
+    fn get_policy_from_async_reader<'a>(
+        &self,
+        reader: Box<dyn qiniu_sdk::prelude::DynAsyncRead + 'a>,
+        opts: qiniu_sdk::upload::GetPolicyOptions,
+    ) -> futures::future::BoxFuture<
+        'a,
+        std::io::Result<(
+            qiniu_sdk::upload::ResumablePolicy,
+            Box<dyn qiniu_sdk::prelude::DynAsyncRead + 'a>,
+        )>,
+    > {
+        self.0.get_policy_from_async_reader(reader, opts)
     }
 }
 
@@ -1671,6 +1710,66 @@ impl UploadManager {
         }
         MultiPartsV2Uploader(uploader)
     }
+
+    /// 创建自动上传器
+    #[pyo3(
+        text_signature = "($self, concurrency_provider = None, data_partition_provider = None, resumable_recorder = None, resumable_policy_provider = None, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+    )]
+    #[args(
+        concurrency_provider = "None",
+        data_partition_provider = "None",
+        resumable_recorder = "None",
+        resumable_policy_provider = "None",
+        response_ok = "None",
+        response_error = "None",
+        before_backoff = "None",
+        after_backoff = "None",
+        part_uploaded = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn auto_uploader(
+        &self,
+        concurrency_provider: Option<ConcurrencyProvider>,
+        data_partition_provider: Option<DataPartitionProvider>,
+        resumable_recorder: Option<ResumableRecorder>,
+        resumable_policy_provider: Option<ResumablePolicyProvider>,
+        before_request: Option<PyObject>,
+        upload_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+        part_uploaded: Option<PyObject>,
+    ) -> AutoUploader {
+        let mut builder = self.0.auto_uploader_builder();
+        if let Some(concurrency_provider) = concurrency_provider {
+            builder.concurrency_provider(concurrency_provider);
+        }
+        if let Some(data_partition_provider) = data_partition_provider {
+            builder.data_partition_provider(data_partition_provider);
+        }
+        if let Some(resumable_recorder) = resumable_recorder {
+            builder.resumable_recorder(resumable_recorder);
+        }
+        if let Some(resumable_policy_provider) = resumable_policy_provider {
+            builder.resumable_policy_provider(resumable_policy_provider);
+        }
+        let mut uploader = builder.build();
+        if let Some(before_request) = before_request {
+            uploader.on_before_request(on_before_request(before_request));
+        }
+        if let Some(upload_progress) = upload_progress {
+            uploader.on_upload_progress(on_upload_progress(upload_progress));
+        }
+        if let Some(response_ok) = response_ok {
+            uploader.on_response_ok(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            uploader.on_response_error(on_error(response_error));
+        }
+        if let Some(part_uploaded) = part_uploaded {
+            uploader.on_part_uploaded(on_part_uploaded(part_uploaded));
+        }
+        AutoUploader(uploader)
+    }
 }
 
 /// 表单上传器
@@ -2392,4 +2491,337 @@ fn on_part_uploaded(
         Python::with_gil(|py| callback.call1(py, (part,)))?;
         Ok(())
     }
+}
+
+/// 期望的分片上传调度器
+#[pyclass]
+#[derive(Debug, Clone)]
+enum MultiPartsUploaderSchedulerPrefer {
+    /// 串行上传调度器
+    Serial = 0,
+    /// 并行上传调度器
+    Concurrent = 1,
+}
+
+impl From<MultiPartsUploaderSchedulerPrefer>
+    for qiniu_sdk::upload::MultiPartsUploaderSchedulerPrefer
+{
+    fn from(prefer: MultiPartsUploaderSchedulerPrefer) -> Self {
+        match prefer {
+            MultiPartsUploaderSchedulerPrefer::Serial => {
+                qiniu_sdk::upload::MultiPartsUploaderSchedulerPrefer::Serial
+            }
+            MultiPartsUploaderSchedulerPrefer::Concurrent => {
+                qiniu_sdk::upload::MultiPartsUploaderSchedulerPrefer::Concurrent
+            }
+        }
+    }
+}
+
+/// 期望的对象单请求上传器
+#[pyclass]
+#[derive(Debug, Clone)]
+enum SinglePartUploaderPrefer {
+    /// 表单上传器
+    Form = 0,
+}
+
+impl From<SinglePartUploaderPrefer> for qiniu_sdk::upload::SinglePartUploaderPrefer {
+    fn from(prefer: SinglePartUploaderPrefer) -> Self {
+        match prefer {
+            SinglePartUploaderPrefer::Form => qiniu_sdk::upload::SinglePartUploaderPrefer::Form,
+        }
+    }
+}
+
+/// 期望的对象分片上传器
+#[pyclass]
+#[derive(Debug, Clone)]
+enum MultiPartsUploaderPrefer {
+    /// 分片上传器 V1
+    V1 = 1,
+    /// 分片上传器 V2
+    V2 = 2,
+}
+
+impl From<MultiPartsUploaderPrefer> for qiniu_sdk::upload::MultiPartsUploaderPrefer {
+    fn from(prefer: MultiPartsUploaderPrefer) -> Self {
+        match prefer {
+            MultiPartsUploaderPrefer::V1 => qiniu_sdk::upload::MultiPartsUploaderPrefer::V1,
+            MultiPartsUploaderPrefer::V2 => qiniu_sdk::upload::MultiPartsUploaderPrefer::V2,
+        }
+    }
+}
+
+/// 自动上传器
+///
+/// 使用设置的各种提供者，将文件或是二进制流数据上传。
+#[pyclass]
+#[derive(Debug, Clone)]
+struct AutoUploader(qiniu_sdk::upload::AutoUploader);
+
+#[pymethods]
+impl AutoUploader {
+    #[pyo3(
+        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None",
+        multi_parts_uploader_scheduler_prefer = "None",
+        single_part_uploader_prefer = "None",
+        multi_parts_uploader_prefer = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn upload_path(
+        &self,
+        path: &str,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
+        single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
+        multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
+        py: Python<'_>,
+    ) -> PyResult<PyObject> {
+        let object_params = make_auto_uploader_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+            multi_parts_uploader_scheduler_prefer,
+            single_part_uploader_prefer,
+            multi_parts_uploader_prefer,
+        )?;
+        py.allow_threads(|| {
+            self.0
+                .upload_path(path, object_params)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+
+    #[pyo3(
+        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None",
+        multi_parts_uploader_scheduler_prefer = "None",
+        single_part_uploader_prefer = "None",
+        multi_parts_uploader_prefer = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn upload_reader(
+        &self,
+        reader: PyObject,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
+        single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
+        multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
+        py: Python<'_>,
+    ) -> PyResult<PyObject> {
+        let object_params = make_auto_uploader_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+            multi_parts_uploader_scheduler_prefer,
+            single_part_uploader_prefer,
+            multi_parts_uploader_prefer,
+        )?;
+        py.allow_threads(|| {
+            self.0
+                .upload_reader(PythonIoBase::new(reader), object_params)
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+
+    #[pyo3(
+        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None",
+        multi_parts_uploader_scheduler_prefer = "None",
+        single_part_uploader_prefer = "None",
+        multi_parts_uploader_prefer = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn async_upload_path<'p>(
+        &self,
+        path: String,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
+        single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
+        multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object_params = make_auto_uploader_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+            multi_parts_uploader_scheduler_prefer,
+            single_part_uploader_prefer,
+            multi_parts_uploader_prefer,
+        )?;
+        let uploader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            uploader
+                .async_upload_path(&path, object_params)
+                .await
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+
+    #[pyo3(
+        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+    )]
+    #[args(
+        region_provider = "None",
+        object_name = "None",
+        file_name = "None",
+        content_type = "None",
+        metadata = "None",
+        custom_vars = "None",
+        uploaded_part_ttl_secs = "None",
+        multi_parts_uploader_scheduler_prefer = "None",
+        single_part_uploader_prefer = "None",
+        multi_parts_uploader_prefer = "None"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    fn async_upload_reader<'p>(
+        &self,
+        reader: PyObject,
+        region_provider: Option<RegionsProvider>,
+        object_name: Option<&str>,
+        file_name: Option<&str>,
+        content_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+        custom_vars: Option<HashMap<String, String>>,
+        uploaded_part_ttl_secs: Option<u64>,
+        multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
+        single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
+        multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object_params = make_auto_uploader_object_params(
+            region_provider,
+            object_name,
+            file_name,
+            content_type,
+            metadata,
+            custom_vars,
+            uploaded_part_ttl_secs,
+            multi_parts_uploader_scheduler_prefer,
+            single_part_uploader_prefer,
+            multi_parts_uploader_prefer,
+        )?;
+        let uploader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            uploader
+                .async_upload_reader(PythonIoBase::new(reader).into_async_read(), object_params)
+                .await
+                .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                .and_then(|v| convert_json_value_to_py_object(&v))
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_auto_uploader_object_params(
+    region_provider: Option<RegionsProvider>,
+    object_name: Option<&str>,
+    file_name: Option<&str>,
+    content_type: Option<&str>,
+    metadata: Option<HashMap<String, String>>,
+    custom_vars: Option<HashMap<String, String>>,
+    uploaded_part_ttl_secs: Option<u64>,
+    multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
+    single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
+    multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
+) -> PyResult<qiniu_sdk::upload::AutoUploaderObjectParams> {
+    let mut builder = qiniu_sdk::upload::AutoUploaderObjectParams::builder();
+    if let Some(region_provider) = region_provider {
+        builder.region_provider(region_provider);
+    }
+    if let Some(object_name) = object_name {
+        builder.object_name(object_name);
+    }
+    if let Some(file_name) = file_name {
+        builder.file_name(file_name);
+    }
+    if let Some(content_type) = content_type {
+        builder.content_type(parse_mime(content_type)?);
+    }
+    if let Some(metadata) = metadata {
+        builder.metadata(metadata);
+    }
+    if let Some(custom_vars) = custom_vars {
+        builder.custom_vars(custom_vars);
+    }
+    if let Some(uploaded_part_ttl_secs) = uploaded_part_ttl_secs {
+        builder.uploaded_part_ttl(Duration::from_secs(uploaded_part_ttl_secs));
+    }
+    if let Some(multi_parts_uploader_scheduler_prefer) = multi_parts_uploader_scheduler_prefer {
+        builder.multi_parts_uploader_scheduler_prefer(multi_parts_uploader_scheduler_prefer.into());
+    }
+    if let Some(single_part_uploader_prefer) = single_part_uploader_prefer {
+        builder.single_part_uploader_prefer(single_part_uploader_prefer.into());
+    }
+    if let Some(multi_parts_uploader_prefer) = multi_parts_uploader_prefer {
+        builder.multi_parts_uploader_prefer(multi_parts_uploader_prefer.into());
+    }
+    Ok(builder.build())
 }

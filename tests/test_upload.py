@@ -251,10 +251,12 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
-            uploader = upload.UploadManager(upload.UploadTokenSigner.new_credential_provider(
+            upload_manager = upload.UploadManager(upload.UploadTokenSigner.new_credential_provider(
                 credential.Credential('ak', 'sk'), 'fakebucket', 3600),
                 use_https=False,
-                uc_endpoints=http_client.Endpoints(['127.0.0.1:8089'])).multi_parts_v2_uploader(upload.DummyResumableRecorder())
+                uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+            uploader = upload_manager.multi_parts_v2_uploader(
+                upload.DummyResumableRecorder())
             data_partitioner = upload.FixedDataPartitionProvider(1 << 22)
 
             async with aiofiles.tempfile.NamedTemporaryFile('wb+') as f:
@@ -290,6 +292,22 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
                     await f.write(os.urandom(1 << 12))
                 await f.flush()
                 response = await scheduler.async_upload(upload.AsyncFileDataSource(f.name), object_name='fakeobjectname', file_name='fakefilename')
+                self.assertEqual(response['body'], 'done')
+
+            uploader = upload_manager.auto_uploader(
+                resumable_recorder=upload.DummyResumableRecorder(),
+                data_partition_provider=data_partitioner)
+            blocks = 0
+            async with aiofiles.tempfile.NamedTemporaryFile('wb+') as f:
+                for _ in range(1 << 12):
+                    await f.write(os.urandom(1 << 12))
+                await f.flush()
+                response = await uploader.async_upload_path(
+                    f.name,
+                    object_name='fakeobjectname',
+                    file_name='fakefilename',
+                    multi_parts_uploader_scheduler_prefer=upload.MultiPartsUploaderSchedulerPrefer.Concurrent,
+                    multi_parts_uploader_prefer=upload.MultiPartsUploaderPrefer.V2)
                 self.assertEqual(response['body'], 'done')
         finally:
             await runner.cleanup()
