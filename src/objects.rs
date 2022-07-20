@@ -6,7 +6,7 @@ use super::{
         BucketRegionsQueryer, Endpoints, HttpClient, JsonResponse, RegionsProvider,
         RequestBuilderParts,
     },
-    utils::{convert_json_value_to_py_object, parse_mime},
+    utils::{convert_api_call_error, convert_json_value_to_py_object, parse_mime},
 };
 use anyhow::Result as AnyResult;
 use futures::{
@@ -123,7 +123,7 @@ impl Bucket {
 
     /// 列举对象
     #[pyo3(
-        text_signature = "($self, /, limit = None, prefix = None, marker = None, version = None, need_parts = None, before_request_callback = None, after_response_ok_callback = None)"
+        text_signature = "($self, /, limit = None, prefix = None, marker = None, version = None, need_parts = None, before_request_callback = None, after_response_ok_callback = None, after_response_error_callback = None)"
     )]
     #[args(
         limit = "None",
@@ -132,7 +132,8 @@ impl Bucket {
         version = "None",
         need_parts = "None",
         before_request_callback = "None",
-        after_response_ok_callback = "None"
+        after_response_ok_callback = "None",
+        after_response_error_callback = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn list(
@@ -144,6 +145,7 @@ impl Bucket {
         need_parts: Option<bool>,
         before_request_callback: Option<PyObject>,
         after_response_ok_callback: Option<PyObject>,
+        after_response_error_callback: Option<PyObject>,
     ) -> ObjectsLister {
         let params = Arc::pin(ObjectsIteratorParams {
             bucket: self.to_owned(),
@@ -154,12 +156,13 @@ impl Bucket {
             need_parts,
             before_request_callback,
             after_response_ok_callback,
+            after_response_error_callback,
         });
         ObjectsLister { params }
     }
 
     fn __iter__(&self, py: Python<'_>) -> PyResult<ObjectsIterator> {
-        self.list(None, None, None, None, None, None, None)
+        self.list(None, None, None, None, None, None, None, None)
             .__iter__(py)
     }
 
@@ -411,6 +414,7 @@ impl Bucket {
         &self,
         before_request_callback: Option<PyObject>,
         after_response_ok_callback: Option<PyObject>,
+        after_response_error_callback: Option<PyObject>,
     ) -> BatchOperations {
         let bucket = Arc::pin(self.to_owned());
         #[allow(unsafe_code)]
@@ -422,6 +426,9 @@ impl Bucket {
         }
         if let Some(callback) = after_response_ok_callback {
             operations.after_response_ok_callback(make_after_response_ok_callback(callback));
+        }
+        if let Some(callback) = after_response_error_callback {
+            operations.after_response_error_callback(make_after_response_error_callback(callback));
         }
         BatchOperations { bucket, operations }
     }
@@ -1028,6 +1035,18 @@ fn make_after_response_ok_callback(
     }
 }
 
+fn make_after_response_error_callback(
+    callback: PyObject,
+) -> impl FnMut(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+    move |error| {
+        let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
+        let error = QiniuApiCallError::from_err(MaybeOwned::Borrowed(error));
+        let error = convert_api_call_error(&error)?;
+        Python::with_gil(|py| callback.call1(py, (error,)))?;
+        Ok(())
+    }
+}
+
 /// 列举操作迭代器
 ///
 /// 可以通过 `Bucket::list` 方法获取该迭代器。
@@ -1097,6 +1116,11 @@ impl ObjectsLister {
                 callback.clone_ref(py),
             ));
         }
+        if let Some(callback) = &self.params.after_response_error_callback {
+            list_builder.after_response_error_callback(make_after_response_error_callback(
+                callback.clone_ref(py),
+            ));
+        }
         list_builder
     }
 }
@@ -1111,6 +1135,7 @@ struct ObjectsIteratorParams {
     need_parts: Option<bool>,
     before_request_callback: Option<PyObject>,
     after_response_ok_callback: Option<PyObject>,
+    after_response_error_callback: Option<PyObject>,
 }
 
 /// 列举操作迭代器
