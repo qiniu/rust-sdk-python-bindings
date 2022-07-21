@@ -27,6 +27,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
         "QiniuEmptyChainedResolver",
         py.get_type::<QiniuEmptyChainedResolver>(),
     )?;
+    m.add("QiniuEmptyEndpoints", py.get_type::<QiniuEmptyEndpoints>())?;
     m.add(
         "QiniuUnsupportedTypeError",
         py.get_type::<QiniuUnsupportedTypeError>(),
@@ -161,6 +162,12 @@ create_exception!(
     QiniuEmptyRegionsProvider,
     PyValueError,
     "七牛空 StaticRegionsProvider 错误"
+);
+create_exception!(
+    qiniu_sdk_bindings,
+    QiniuEmptyEndpoints,
+    PyValueError,
+    "七牛空 Endpoints 错误"
 );
 create_exception!(
     qiniu_sdk_bindings,

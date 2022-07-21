@@ -89,8 +89,10 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             objects_manager = objects.ObjectsManager(credential.Credential(
-                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+                'ak', 'sk'), use_https=False, queryer=queryer)
             bucket = objects_manager.bucket('fakebucket')
             self.assertEqual(bucket.name, 'fakebucket')
             resp = await bucket.stat_object('fakekey').async_call()
@@ -174,8 +176,10 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             objects_manager = objects.ObjectsManager(credential.Credential(
-                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+                'ak', 'sk'), use_https=False, queryer=queryer)
             bucket = objects_manager.bucket('fakebucket')
             idx = 0
             async for object in bucket.list(version=objects.ListVersion.V1):
@@ -216,8 +220,10 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             objects_manager = objects.ObjectsManager(credential.Credential(
-                'ak', 'sk'), use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+                'ak', 'sk'), use_https=False, queryer=queryer)
             bucket = objects_manager.bucket('fakebucket')
             ops = bucket.batch_ops()
             ops.add_operation(bucket.stat_object('object_1'))

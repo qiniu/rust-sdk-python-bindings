@@ -57,7 +57,7 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<LimitedBackoff>()?;
     m.add_class::<HttpClient>()?;
     m.add_class::<SimplifiedCallbackContext>()?;
-    m.add_class::<CallbackContextRef>()?;
+    m.add_class::<CallbackContextMut>()?;
     m.add_class::<ExtendedCallbackContextRef>()?;
     m.add_class::<JsonResponse>()?;
 
@@ -2262,16 +2262,22 @@ fn on_receive_response_header(
 ///
 /// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
-struct CallbackContextRef(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
+pub(crate) struct CallbackContextMut(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
 
-impl CallbackContextRef {
+impl CallbackContextMut {
     fn new(ctx: &mut dyn qiniu_sdk::http_client::CallbackContext) -> Self {
         #[allow(unsafe_code)]
         Self(unsafe { transmute(ctx) })
     }
 }
 
-impl_callback_context!(CallbackContextRef);
+impl_callback_context!(CallbackContextMut);
+
+impl<'a> AsMut<dyn qiniu_sdk::http_client::CallbackContext + 'a> for CallbackContextMut {
+    fn as_mut(&mut self) -> &mut (dyn qiniu_sdk::http_client::CallbackContext + 'a) {
+        self.0
+    }
+}
 
 fn on_to_resolve_domain(
     callback: PyObject,
@@ -2280,7 +2286,7 @@ fn on_to_resolve_domain(
        + Sync
        + 'static {
     move |context, domain| {
-        Python::with_gil(|py| callback.call1(py, (CallbackContextRef::new(context), domain)))?;
+        Python::with_gil(|py| callback.call1(py, (CallbackContextMut::new(context), domain)))?;
         Ok(())
     }
 }
@@ -2302,7 +2308,7 @@ fn on_domain_resolved(
                 .iter()
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>();
-            callback.call1(py, (CallbackContextRef::new(context), domain, ips))
+            callback.call1(py, (CallbackContextMut::new(context), domain, ips))
         })?;
         Ok(())
     }
@@ -2319,7 +2325,7 @@ fn on_to_choose_ips(
        + 'static {
     move |context, ips| {
         let ips = ips.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
-        Python::with_gil(|py| callback.call1(py, (CallbackContextRef::new(context), ips)))?;
+        Python::with_gil(|py| callback.call1(py, (CallbackContextMut::new(context), ips)))?;
         Ok(())
     }
 }
@@ -2338,7 +2344,7 @@ fn on_ips_chosen(
         let before = before.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
         let after = after.iter().map(|ip| ip.to_string()).collect::<Vec<_>>();
         Python::with_gil(|py| {
-            callback.call1(py, (CallbackContextRef::new(context), before, after))
+            callback.call1(py, (CallbackContextMut::new(context), before, after))
         })?;
         Ok(())
     }

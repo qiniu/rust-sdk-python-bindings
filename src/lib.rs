@@ -1,5 +1,6 @@
 mod apis;
 mod credential;
+mod download;
 mod etag;
 mod exceptions;
 mod http;
@@ -27,6 +28,7 @@ fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_submodule(apis::create_module(py)?)?;
     m.add_submodule(objects::create_module(py)?)?;
     m.add_submodule(upload::create_module(py)?)?;
+    m.add_submodule(download::create_module(py)?)?;
     m.add_submodule(utils::create_module(py)?)?;
 
     return Ok(());

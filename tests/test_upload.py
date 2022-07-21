@@ -128,10 +128,12 @@ class TestFormUploader(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             uploader = upload.UploadManager(upload.UploadTokenSigner.new_credential_provider(
                 credential.Credential('ak', 'sk'), 'fakebucket', 3600),
                 use_https=False,
-                uc_endpoints=http_client.Endpoints(['127.0.0.1:8089'])).form_uploader()
+                queryer=queryer).form_uploader()
             async with aiofiles.tempfile.NamedTemporaryFile('wb+') as f:
                 for _ in range(1 << 10):
                     await f.write(os.urandom(1 << 10))
@@ -182,10 +184,11 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             uploader = upload.UploadManager(upload.UploadTokenSigner.new_credential_provider(
                 credential.Credential('ak', 'sk'), 'fakebucket', 3600),
-                use_https=False,
-                uc_endpoints=http_client.Endpoints(['127.0.0.1:8089'])).multi_parts_v1_uploader(upload.DummyResumableRecorder())
+                use_https=False, queryer=queryer).multi_parts_v1_uploader(upload.DummyResumableRecorder())
             data_partitioner = upload.FixedDataPartitionProvider(1 << 22)
             async with aiofiles.tempfile.NamedTemporaryFile('wb+') as f:
                 for _ in range(1 << 12):
@@ -251,10 +254,11 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
         await site.start()
 
         try:
+            queryer = http_client.BucketRegionsQueryer.in_memory(
+                use_https=False, uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
             upload_manager = upload.UploadManager(upload.UploadTokenSigner.new_credential_provider(
                 credential.Credential('ak', 'sk'), 'fakebucket', 3600),
-                use_https=False,
-                uc_endpoints=http_client.Endpoints(['127.0.0.1:8089']))
+                use_https=False, queryer=queryer)
             uploader = upload_manager.multi_parts_v2_uploader(
                 upload.DummyResumableRecorder())
             data_partitioner = upload.FixedDataPartitionProvider(1 << 22)
