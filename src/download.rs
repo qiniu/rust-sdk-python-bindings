@@ -1,12 +1,17 @@
 use super::{
     credential::CredentialProvider,
-    exceptions::{QiniuApiCallError, QiniuEmptyEndpoints},
-    http_client::{CallbackContextMut, EndpointsProvider},
-    utils::{convert_api_call_error, extract_endpoints},
+    exceptions::{QiniuApiCallError, QiniuDownloadError, QiniuEmptyEndpoints},
+    http::{HttpResponsePartsMut, TransferProgressInfo},
+    http_client::{CallbackContextMut, EndpointsProvider, HttpClient, RequestBuilderPartsRef},
+    utils::{convert_api_call_error, extract_endpoints, parse_headers, PythonIoBase},
 };
+use anyhow::Result as AnyResult;
+use futures::{lock::Mutex as AsyncMutex, AsyncReadExt};
 use maybe_owned::MaybeOwned;
-use pyo3::prelude::*;
-use std::time::Duration;
+use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
+use std::{
+    collections::HashMap, io::Read, mem::transmute, num::NonZeroU64, sync::Arc, time::Duration,
+};
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "download")?;
@@ -19,6 +24,9 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<UrlsSigner>()?;
     m.add_class::<StaticDomainsUrlsGenerator>()?;
     m.add_class::<EndpointsUrlGenerator>()?;
+    m.add_class::<DownloadManager>()?;
+    m.add_class::<DownloadingObjectReader>()?;
+    m.add_class::<AsyncDownloadingObjectReader>()?;
     Ok(m)
 }
 
@@ -154,6 +162,16 @@ impl DownloadRetrier {
 
     fn __str__(&self) -> String {
         self.__repr__()
+    }
+}
+
+impl qiniu_sdk::download::DownloadRetrier for DownloadRetrier {
+    fn retry(
+        &self,
+        request: &mut dyn qiniu_sdk::http_client::CallbackContext,
+        opts: qiniu_sdk::download::DownloadRetrierOptions<'_>,
+    ) -> qiniu_sdk::download::RetryResult {
+        self.0.retry(request, opts)
     }
 }
 
@@ -328,5 +346,494 @@ impl EndpointsUrlGenerator {
             builder.use_https(use_https);
         }
         (Self, DownloadUrlsGenerator(Box::new(builder.build())))
+    }
+}
+
+/// 下载管理器
+#[pyclass]
+#[derive(Debug, Clone)]
+#[pyo3(text_signature = "(urls_generator, use_https = None, http_client = None)")]
+struct DownloadManager(qiniu_sdk::download::DownloadManager);
+
+#[pymethods]
+impl DownloadManager {
+    /// 创建下载管理器
+    #[new]
+    #[args(use_https = "None", http_client = "None")]
+    fn new(
+        urls_generator: DownloadUrlsGenerator,
+        use_https: Option<bool>,
+        http_client: Option<HttpClient>,
+    ) -> Self {
+        let mut builder = qiniu_sdk::download::DownloadManager::builder(urls_generator);
+        if let Some(use_https) = use_https {
+            builder.use_https(use_https);
+        }
+        if let Some(http_client) = http_client {
+            builder.http_client(http_client.into());
+        }
+        Self(builder.build())
+    }
+
+    /// 获取下载内容阅读器
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn reader(
+        &self,
+        object_name: &str,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> PyResult<DownloadingObjectReader> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        Ok(DownloadingObjectReader(object.into_read()))
+    }
+
+    /// 将下载的对象内容写入指定的文件系统路径
+    ///
+    /// 需要注意，如果文件已经存在，则会覆盖该文件，如果文件不存在，则会创建该文件。
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, to_path, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn download_to_path(
+        &self,
+        object_name: &str,
+        to_path: &str,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> PyResult<()> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        object
+            .to_path(to_path)
+            .map_err(QiniuDownloadError::from_err)
+    }
+
+    /// 将下载的对象内容写入指定的输出流
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, to_object, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn download_to_writer(
+        &self,
+        object_name: &str,
+        to_object: PyObject,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> PyResult<()> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        object
+            .to_writer(&mut PythonIoBase::new(to_object))
+            .map_err(QiniuDownloadError::from_err)
+    }
+
+    /// 异步获取下载内容阅读器
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn async_reader(
+        &self,
+        object_name: &str,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> PyResult<AsyncDownloadingObjectReader> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        Ok(AsyncDownloadingObjectReader(Arc::new(AsyncMutex::new(
+            object.into_async_read(),
+        ))))
+    }
+
+    /// 将下载的对象内容异步写入指定的文件系统路径
+    ///
+    /// 需要注意，如果文件已经存在，则会覆盖该文件，如果文件不存在，则会创建该文件。
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, to_path, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn async_download_to_path<'p>(
+        &'p self,
+        object_name: &str,
+        to_path: String,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            object
+                .async_to_path(to_path)
+                .await
+                .map_err(QiniuDownloadError::from_err)
+        })
+    }
+
+    /// 将下载的对象内容写入指定的输出流
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(
+        text_signature = "($self, object_name, to_object, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+    )]
+    #[args(
+        range_from = "None",
+        range_to = "None",
+        retrier = "None",
+        headers = "None",
+        before_request = "None",
+        download_progress = "None",
+        response_ok = "None",
+        response_error = "None"
+    )]
+    fn download_to_async_writer<'p>(
+        &'p self,
+        object_name: &str,
+        to_object: PyObject,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+        py: Python<'p>,
+    ) -> PyResult<&'p PyAny> {
+        let object = self.make_download_object(
+            object_name,
+            range_from,
+            range_to,
+            retrier,
+            headers,
+            before_request,
+            download_progress,
+            response_ok,
+            response_error,
+        )?;
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            object
+                .to_async_writer(&mut PythonIoBase::new(to_object).into_async_write())
+                .await
+                .map_err(QiniuDownloadError::from_err)
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// 下载阅读器
+#[pyclass]
+#[derive(Debug)]
+struct DownloadingObjectReader(qiniu_sdk::download::DownloadingObjectReader);
+
+#[pymethods]
+impl DownloadingObjectReader {
+    /// 读取下载的数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        let mut buf = Vec::new();
+        py.allow_threads(|| {
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut self.0).take(size).read_to_end(&mut buf)
+            } else {
+                self.0.read_to_end(&mut buf)
+            }
+            .map_err(PyIOError::new_err)
+        })?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// 读取所有下载的数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        self.read(-1, py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+/// 异步下载阅读器
+#[pyclass]
+#[derive(Debug)]
+struct AsyncDownloadingObjectReader(
+    Arc<AsyncMutex<qiniu_sdk::download::AsyncDownloadingObjectReader>>,
+);
+
+#[pymethods]
+impl AsyncDownloadingObjectReader {
+    /// 异步读取下载的数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut *reader).take(size).read_to_end(&mut buf).await
+            } else {
+                reader.read_to_end(&mut buf).await
+            }
+            .map_err(PyIOError::new_err)?;
+            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
+        })
+    }
+
+    /// 异步所有读取下载的数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        self.read(-1, py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl DownloadManager {
+    #[allow(clippy::too_many_arguments)]
+    fn make_download_object(
+        &self,
+        object_name: &str,
+        range_from: Option<u64>,
+        range_to: Option<u64>,
+        retrier: Option<DownloadRetrier>,
+        headers: Option<HashMap<String, String>>,
+        before_request: Option<PyObject>,
+        download_progress: Option<PyObject>,
+        response_ok: Option<PyObject>,
+        response_error: Option<PyObject>,
+    ) -> PyResult<qiniu_sdk::download::DownloadingObject> {
+        let mut object = self
+            .0
+            .download(object_name)
+            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?;
+        if let Some(range_from) = range_from {
+            if let Some(range_from) = NonZeroU64::new(range_from) {
+                object = object.range_from(range_from);
+            }
+        }
+        if let Some(range_to) = range_to {
+            if let Some(range_to) = NonZeroU64::new(range_to) {
+                object = object.range_to(range_to);
+            }
+        }
+        if let Some(retrier) = retrier {
+            object = object.retrier(retrier);
+        }
+        if let Some(headers) = headers {
+            object = object.headers(parse_headers(headers)?);
+        }
+        if let Some(before_request) = before_request {
+            object = object.on_before_request(on_before_request(before_request));
+        }
+        if let Some(download_progress) = download_progress {
+            object = object.on_download_progress(on_download_progress(download_progress));
+        }
+        if let Some(response_ok) = response_ok {
+            object = object.on_response_ok(on_response(response_ok));
+        }
+        if let Some(response_error) = response_error {
+            object = object.on_response_error(on_error(response_error));
+        }
+        Ok(object)
+    }
+}
+
+fn on_before_request(
+    callback: PyObject,
+) -> impl Fn(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()> + Send + Sync + 'static
+{
+    move |parts| {
+        Python::with_gil(|py| callback.call1(py, (RequestBuilderPartsRef::new(parts),)))?;
+        Ok(())
+    }
+}
+
+fn on_download_progress(
+    callback: PyObject,
+) -> impl Fn(qiniu_sdk::http::TransferProgressInfo) -> AnyResult<()> + Send + Sync + 'static {
+    move |progress| {
+        Python::with_gil(|py| {
+            callback.call1(
+                py,
+                (TransferProgressInfo::new(
+                    progress.transferred_bytes(),
+                    progress.total_bytes(),
+                ),),
+            )
+        })?;
+        Ok(())
+    }
+}
+
+fn on_response(
+    callback: PyObject,
+) -> impl Fn(&mut qiniu_sdk::http::ResponseParts) -> AnyResult<()> + Send + Sync + 'static {
+    move |parts| {
+        let parts = HttpResponsePartsMut::from(parts);
+        Python::with_gil(|py| callback.call1(py, (parts,)))?;
+        Ok(())
+    }
+}
+
+fn on_error(
+    callback: PyObject,
+) -> impl Fn(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+    move |error| {
+        #[allow(unsafe_code)]
+        let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
+        let error = QiniuApiCallError::from_err(MaybeOwned::Borrowed(error));
+        let error = convert_api_call_error(&error)?;
+        Python::with_gil(|py| callback.call1(py, (error,)))?;
+        Ok(())
     }
 }

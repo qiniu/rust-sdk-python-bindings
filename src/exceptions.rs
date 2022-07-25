@@ -82,6 +82,7 @@ pub(super) fn register(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     QiniuInvalidDomainWithPortError::register(py, m)?;
     QiniuInvalidIpAddrWithPortError::register(py, m)?;
     QiniuApiCallError::register(py, m)?;
+    QiniuDownloadError::register(py, m)?;
     QiniuAuthorizationError::register(py, m)?;
     QiniuInvalidPrefixLengthError::register(py, m)?;
     Ok(())
@@ -397,7 +398,6 @@ create_exception_with_info!(
     qiniu_sdk::http::ResponseError,
     "七牛 HTTP 调用错误"
 );
-
 create_exception_with_info!(
     qiniu_sdk_bindings,
     QiniuApiCallError,
@@ -406,6 +406,15 @@ create_exception_with_info!(
     QiniuApiCallErrorInfo,
     MaybeOwned<'static, qiniu_sdk::http_client::ResponseError>,
     "七牛 API 调用错误"
+);
+create_exception_with_info!(
+    qiniu_sdk_bindings,
+    QiniuDownloadError,
+    "QiniuDownloadError",
+    PyIOError,
+    QiniuDownloadErrorInfo,
+    qiniu_sdk::download::DownloadError,
+    "七牛下载错误"
 );
 create_exception_with_info!(
     qiniu_sdk_bindings,

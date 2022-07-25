@@ -19,7 +19,7 @@ use futures::{
     future::{select, Either},
     io::Cursor,
     lock::Mutex as AsyncMutex,
-    pin_mut, ready, AsyncRead, AsyncReadExt, AsyncSeek, FutureExt, SinkExt, StreamExt,
+    pin_mut, ready, AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, FutureExt, SinkExt, StreamExt,
 };
 use pyo3::{
     exceptions::PyIOError,
@@ -66,6 +66,10 @@ impl PythonIoBase {
 
     pub(super) fn into_async_read(self) -> PythonIoBaseAsyncRead {
         PythonIoBaseAsyncRead::new(self)
+    }
+
+    pub(super) fn into_async_write(self) -> PythonIoBaseAsyncWrite {
+        PythonIoBaseAsyncWrite::new(self)
     }
 
     pub(super) fn into_async_read_with_local_agent(
@@ -134,7 +138,7 @@ trait PythonCaller: Send + Sync + Debug {
         &self,
         object: PyObject,
         method: &str,
-        args: &PyTuple,
+        args: Option<&PyTuple>,
         py: Python<'_>,
     ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>>;
 }
@@ -147,15 +151,18 @@ impl PythonCaller for DirectPyCall {
         &self,
         object: PyObject,
         method: &str,
-        args: &PyTuple,
+        args: Option<&PyTuple>,
         py: Python<'_>,
     ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>> {
-        pyo3_asyncio::async_std::into_future(object.call_method1(py, method, args)?.as_ref(py)).map(
-            |fut| {
-                Box::pin(fut)
-                    as Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>
-            },
-        )
+        let result = if let Some(args) = args {
+            object.call_method1(py, method, args)
+        } else {
+            object.call_method0(py, method)
+        };
+        pyo3_asyncio::async_std::into_future(result?.as_ref(py)).map(|fut| {
+            Box::pin(fut)
+                as Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>
+        })
     }
 }
 
@@ -167,7 +174,7 @@ struct RemotePyCall {
 struct RemotePyCallArgs {
     object: PyObject,
     method: String,
-    args: Py<PyTuple>,
+    args: Option<Py<PyTuple>>,
     sender: OneShotSender<PyResult<PyObject>>,
 }
 
@@ -176,12 +183,12 @@ impl PythonCaller for RemotePyCall {
         &self,
         object: PyObject,
         method: &str,
-        args: &PyTuple,
+        args: Option<&PyTuple>,
         py: Python<'_>,
     ) -> PyResult<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + Sync + 'static>>> {
         let sender = self.sender.to_owned();
         let method = method.to_owned();
-        let args = args.into_py(py);
+        let args = args.map(|args| args.into_py(py));
         Ok(Box::pin(async move {
             let (s, r) = channel();
             sender
@@ -218,7 +225,7 @@ impl RemotePyCallLocalAgent {
                         direct_call.call_python_method(
                             args.object,
                             args.method.as_str(),
-                            args.args.as_ref(py),
+                            args.args.as_ref().map(|args| args.as_ref(py)),
                             py,
                         )
                     })?
@@ -237,12 +244,12 @@ impl RemotePyCallLocalAgent {
 #[derive(Debug)]
 pub(super) struct PythonIoBaseAsyncRead {
     base: PythonIoBase,
-    step: AsyncStep,
+    step: PythonIoBaseAsyncReadStep,
     py_caller: Arc<dyn PythonCaller>,
 }
 
 #[derive(SmartDefault, Debug)]
-enum AsyncStep {
+enum PythonIoBaseAsyncReadStep {
     #[default]
     Free,
     Reading(AsyncReadStep),
@@ -294,50 +301,55 @@ impl AsyncRead for PythonIoBaseAsyncRead {
         buf: &mut [u8],
     ) -> Poll<IoResult<usize>> {
         match &mut self.step {
-            AsyncStep::Reading(AsyncReadStep::Waiting(fut)) => match ready!(fut.poll_unpin(cx)) {
-                Ok(buffered) if buffered.is_empty() => {
-                    self.step = AsyncStep::Reading(AsyncReadStep::Done);
-                    Poll::Ready(Ok(0))
+            PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Waiting(fut)) => {
+                match ready!(fut.poll_unpin(cx)) {
+                    Ok(buffered) if buffered.is_empty() => {
+                        self.step = PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Done);
+                        Poll::Ready(Ok(0))
+                    }
+                    Ok(buffered) => {
+                        self.step = PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Buffered(
+                            Cursor::new(buffered),
+                        ));
+                        self.poll_read(cx, buf)
+                    }
+                    Err(err) => {
+                        self.step = Default::default();
+                        Poll::Ready(Err(err))
+                    }
                 }
-                Ok(buffered) => {
-                    self.step = AsyncStep::Reading(AsyncReadStep::Buffered(Cursor::new(buffered)));
-                    self.poll_read(cx, buf)
-                }
-                Err(err) => {
-                    self.step = Default::default();
-                    Poll::Ready(Err(err))
-                }
-            },
-            AsyncStep::Reading(AsyncReadStep::Buffered(buffered)) => {
+            }
+            PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Buffered(buffered)) => {
                 match ready!(Pin::new(buffered).poll_read(cx, buf)) {
                     Ok(0) => {
-                        let io_base = self.base.io_base.to_owned();
+                        let io_base = Python::with_gil(|py| self.base.io_base.clone_ref(py));
                         let py_caller = self.py_caller.to_owned();
-                        self.step =
-                            AsyncStep::Reading(AsyncReadStep::Waiting(Box::pin(async move {
+                        self.step = PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Waiting(
+                            Box::pin(async move {
                                 let retval = Python::with_gil(|py| {
                                     py_caller.call_python_method(
                                         io_base,
                                         READ,
-                                        PyTuple::new(py, [1 << 20]),
+                                        Some(PyTuple::new(py, [1 << 20])),
                                         py,
                                     )
                                 })?
                                 .await?;
                                 Python::with_gil(|py| extract_bytes_from_py_object(py, retval))
                                     .map_err(make_io_error_from_py_err)
-                            })));
+                            }),
+                        ));
                         self.poll_read(cx, buf)
                     }
                     result => Poll::Ready(result),
                 }
             }
-            AsyncStep::Reading(AsyncReadStep::Done) => Poll::Ready(Ok(0)),
-            AsyncStep::Free => {
-                self.step = AsyncStep::Reading(Default::default());
+            PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Done) => Poll::Ready(Ok(0)),
+            PythonIoBaseAsyncReadStep::Free => {
+                self.step = PythonIoBaseAsyncReadStep::Reading(Default::default());
                 self.poll_read(cx, buf)
             }
-            AsyncStep::Seeking(AsyncSeekStep::Waiting { .. }) => unreachable!(),
+            PythonIoBaseAsyncReadStep::Seeking(AsyncSeekStep::Waiting { .. }) => unreachable!(),
         }
     }
 }
@@ -349,31 +361,34 @@ impl AsyncSeek for PythonIoBaseAsyncRead {
         pos: SeekFrom,
     ) -> Poll<IoResult<u64>> {
         match &mut self.step {
-            AsyncStep::Free | AsyncStep::Reading(AsyncReadStep::Done) => {
-                let io_base = self.base.io_base.to_owned();
+            PythonIoBaseAsyncReadStep::Free
+            | PythonIoBaseAsyncReadStep::Reading(AsyncReadStep::Done) => {
+                let io_base = Python::with_gil(|py| self.base.io_base.clone_ref(py));
                 let py_caller = self.py_caller.to_owned();
                 let (offset, whence) = split_seek_from(pos);
-                self.step = AsyncStep::Seeking(AsyncSeekStep::Waiting(Box::pin(async move {
-                    let retval = Python::with_gil(|py| {
-                        py_caller.call_python_method(
-                            io_base,
-                            SEEK,
-                            PyTuple::new(py, [offset, whence]),
-                            py,
-                        )
-                    })?
-                    .await?;
-                    Python::with_gil(|py| retval.extract::<u64>(py))
-                        .map_err(make_io_error_from_py_err)
-                })));
+                self.step = PythonIoBaseAsyncReadStep::Seeking(AsyncSeekStep::Waiting(Box::pin(
+                    async move {
+                        let retval = Python::with_gil(|py| {
+                            py_caller.call_python_method(
+                                io_base,
+                                SEEK,
+                                Some(PyTuple::new(py, [offset, whence])),
+                                py,
+                            )
+                        })?
+                        .await?;
+                        Python::with_gil(|py| retval.extract::<u64>(py))
+                            .map_err(make_io_error_from_py_err)
+                    },
+                )));
                 self.poll_seek(cx, pos)
             }
-            AsyncStep::Seeking(AsyncSeekStep::Waiting(fut)) => {
+            PythonIoBaseAsyncReadStep::Seeking(AsyncSeekStep::Waiting(fut)) => {
                 let result = ready!(fut.poll_unpin(cx));
-                self.step = AsyncStep::Free;
+                self.step = PythonIoBaseAsyncReadStep::Free;
                 Poll::Ready(result)
             }
-            AsyncStep::Reading { .. } => unreachable!(),
+            PythonIoBaseAsyncReadStep::Reading { .. } => unreachable!(),
         }
     }
 }
@@ -407,6 +422,136 @@ fn extract_bytes_from_py_object(py: Python<'_>, obj: PyObject) -> PyResult<Vec<u
 
 fn make_io_error_from_py_err(err: PyErr) -> IoError {
     IoError::new(IoErrorKind::Other, err)
+}
+
+#[derive(Debug)]
+pub(super) struct PythonIoBaseAsyncWrite {
+    base: PythonIoBase,
+    step: AsyncWriteStep,
+    py_caller: Arc<dyn PythonCaller>,
+}
+
+#[derive(SmartDefault)]
+enum AsyncWriteStep {
+    WaitingForWriting(SyncBoxFuture<'static, IoResult<usize>>),
+    WaitingForFlushing(SyncBoxFuture<'static, IoResult<()>>),
+    WaitingForClosing(SyncBoxFuture<'static, IoResult<()>>),
+    #[default]
+    Done,
+}
+
+impl AsyncWrite for PythonIoBaseAsyncWrite {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<IoResult<usize>> {
+        match &mut self.step {
+            AsyncWriteStep::WaitingForWriting(fut) => match ready!(fut.poll_unpin(cx)) {
+                Ok(have_written) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Ok(have_written))
+                }
+                Err(err) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Err(err))
+                }
+            },
+            AsyncWriteStep::Done => {
+                let io_base = Python::with_gil(|py| self.base.io_base.clone_ref(py));
+                let py_caller = self.py_caller.to_owned();
+                let bytes: Py<PyBytes> = Python::with_gil(|py| PyBytes::new(py, buf).into_py(py));
+                self.step = AsyncWriteStep::WaitingForWriting(Box::pin(async move {
+                    let retval = Python::with_gil(|py| {
+                        py_caller.call_python_method(
+                            io_base,
+                            WRITE,
+                            Some(PyTuple::new(py, [bytes])),
+                            py,
+                        )
+                    })?
+                    .await?;
+                    Python::with_gil(|py| retval.extract::<usize>(py))
+                        .map_err(make_io_error_from_py_err)
+                }));
+                self.poll_write(cx, buf)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<()>> {
+        match &mut self.step {
+            AsyncWriteStep::WaitingForFlushing(fut) => match ready!(fut.poll_unpin(cx)) {
+                Ok(()) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Ok(()))
+                }
+                Err(err) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Err(err))
+                }
+            },
+            AsyncWriteStep::Done => {
+                let io_base = Python::with_gil(|py| self.base.io_base.clone_ref(py));
+                let py_caller = self.py_caller.to_owned();
+                self.step = AsyncWriteStep::WaitingForFlushing(Box::pin(async move {
+                    Python::with_gil(|py| py_caller.call_python_method(io_base, FLUSH, None, py))?
+                        .await?;
+                    Ok(())
+                }));
+                self.poll_flush(cx)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<()>> {
+        match &mut self.step {
+            AsyncWriteStep::WaitingForClosing(fut) => match ready!(fut.poll_unpin(cx)) {
+                Ok(()) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Ok(()))
+                }
+                Err(err) => {
+                    self.step = AsyncWriteStep::Done;
+                    Poll::Ready(Err(err))
+                }
+            },
+            AsyncWriteStep::Done => {
+                let io_base = Python::with_gil(|py| self.base.io_base.clone_ref(py));
+                let py_caller = self.py_caller.to_owned();
+                self.step = AsyncWriteStep::WaitingForClosing(Box::pin(async move {
+                    Python::with_gil(|py| py_caller.call_python_method(io_base, FLUSH, None, py))?
+                        .await?;
+                    Ok(())
+                }));
+                self.poll_flush(cx)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Debug for AsyncWriteStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WaitingForWriting(_) => f.debug_tuple("WaitingForWriting").finish(),
+            Self::WaitingForFlushing(_) => f.debug_tuple("WaitingForFlushing").finish(),
+            Self::WaitingForClosing(_) => f.debug_tuple("WaitingForClosing").finish(),
+            Self::Done => f.debug_tuple("Done").finish(),
+        }
+    }
+}
+
+impl PythonIoBaseAsyncWrite {
+    fn new(base: PythonIoBase) -> Self {
+        Self {
+            base,
+            step: Default::default(),
+            py_caller: Arc::new(DirectPyCall),
+        }
+    }
 }
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {

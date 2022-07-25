@@ -35,6 +35,10 @@
    :members:
    :show-inheritance:
 
+.. automodule:: qiniu_sdk_bindings.download
+   :members:
+   :show-inheritance:
+
 .. automodule:: qiniu_sdk_bindings.utils
    :members:
    :show-inheritance:
