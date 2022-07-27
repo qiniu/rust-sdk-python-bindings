@@ -121,7 +121,11 @@ impl ApiDetailedDescription {
         let text_signature = "(".to_owned()
             + &required_arg_names.join(", ")
             + ", /, "
-            + &optional_arg_names.join(", ")
+            + &optional_arg_names
+                .iter()
+                .map(|name| format!("{} = None", name))
+                .collect::<Vec<_>>()
+                .join(", ")
             + ")";
         let args_list = required_args
             .iter()

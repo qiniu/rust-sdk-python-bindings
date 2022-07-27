@@ -6,13 +6,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     let m = PyModule::new(py, "etag")?;
     m.add("ETAG_SIZE", ETAG_SIZE)?;
     m.add_class::<EtagV1>()?;
-    m.add_class::<EtagV2>()?;
-    m.add_class::<Etag>()?;
-    m.add_class::<EtagVersion>()?;
     m.add_function(wrap_pyfunction!(etag_of, m)?)?;
-    m.add_function(wrap_pyfunction!(etag_with_parts, m)?)?;
     m.add_function(wrap_pyfunction!(async_etag_of, m)?)?;
-    m.add_function(wrap_pyfunction!(async_etag_with_parts, m)?)?;
     Ok(m)
 }
 
@@ -58,7 +53,12 @@ macro_rules! define_etag_struct {
     };
 }
 
-define_etag_struct!(EtagV1, qiniu_sdk::etag::EtagV1, "Etag V1 计算器", "()");
+define_etag_struct!(
+    EtagV1,
+    qiniu_sdk::etag::EtagV1,
+    "Etag V1 计算器\n通过 `EtagV1()` 创建",
+    "()"
+);
 
 #[pymethods]
 impl EtagV1 {
@@ -69,89 +69,21 @@ impl EtagV1 {
     }
 }
 
-define_etag_struct!(EtagV2, qiniu_sdk::etag::EtagV2, "Etag V2 计算器", "()");
-
-#[pymethods]
-impl EtagV2 {
-    /// 创建 Etag V2 计算器
-    #[new]
-    fn new() -> Self {
-        Self(qiniu_sdk::etag::EtagV2::new())
-    }
-}
-
-define_etag_struct!(
-    Etag,
-    qiniu_sdk::etag::Etag,
-    "兼容 Etag 兼容计算器，可以为不同版本的 Etag 提供相同的接口",
-    "(version)"
-);
-
-#[pymethods]
-impl Etag {
-    /// 创建 Etag 兼容计算器
-    #[new]
-    fn new(version: EtagVersion) -> Self {
-        Self(qiniu_sdk::etag::Etag::new(version.into()))
-    }
-}
-
-/// Etag 版本
-#[pyclass]
-#[derive(Debug, Copy, Clone)]
-enum EtagVersion {
-    /// Etag V1
-    V1 = 1,
-    /// Etag V2
-    V2 = 2,
-}
-
-impl From<EtagVersion> for qiniu_sdk::etag::EtagVersion {
-    fn from(v: EtagVersion) -> Self {
-        match v {
-            EtagVersion::V1 => qiniu_sdk::etag::EtagVersion::V1,
-            EtagVersion::V2 => qiniu_sdk::etag::EtagVersion::V2,
-        }
-    }
-}
-
 /// 读取 reader 中的数据并计算它的 Etag V1，生成结果
 #[pyfunction]
-#[pyo3(text_signature = "(io_base)")]
-fn etag_of(io_base: PyObject) -> PyResult<String> {
-    let etag = qiniu_sdk::etag::etag_of(PythonIoBase::new(io_base))?;
-    Ok(etag)
-}
-
-/// 根据给出的数据块尺寸，读取 reader 中的数据并计算它的 Etag V2，生成结果
-#[pyfunction]
-#[pyo3(text_signature = "(io_base, parts)")]
-fn etag_with_parts(io_base: PyObject, parts: Vec<usize>) -> PyResult<String> {
-    let etag = qiniu_sdk::etag::etag_with_parts(PythonIoBase::new(io_base), &parts)?;
+#[pyo3(text_signature = "(reader)")]
+fn etag_of(reader: PyObject) -> PyResult<String> {
+    let etag = qiniu_sdk::etag::etag_of(PythonIoBase::new(reader))?;
     Ok(etag)
 }
 
 /// 异步读取 reader 中的数据并计算它的 Etag V1，生成结果
 #[pyfunction]
-#[pyo3(text_signature = "(io_base)")]
-fn async_etag_of(io_base: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
+#[pyo3(text_signature = "(reader)")]
+fn async_etag_of(reader: PyObject, py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::async_std::future_into_py(py, async move {
         let etag =
-            qiniu_sdk::etag::async_etag_of(PythonIoBase::new(io_base).into_async_read()).await?;
-        Ok(etag)
-    })
-}
-
-/// 根据给出的数据块尺寸，异步读取 reader 中的数据并计算它的 Etag V2，生成结果
-#[pyfunction]
-#[pyo3(text_signature = "(io_base, parts)")]
-fn async_etag_with_parts(io_base: PyObject, parts: Vec<usize>, py: Python<'_>) -> PyResult<&PyAny> {
-    pyo3_asyncio::async_std::future_into_py(py, async move {
-        let etag = qiniu_sdk::etag::async_etag_with_parts(
-            PythonIoBase::new(io_base).into_async_read(),
-            &parts,
-        )
-        .await?;
+            qiniu_sdk::etag::async_etag_of(PythonIoBase::new(reader).into_async_read()).await?;
         Ok(etag)
     })
 }

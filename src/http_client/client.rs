@@ -59,12 +59,15 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_class::<SimplifiedCallbackContext>()?;
     m.add_class::<CallbackContextMut>()?;
     m.add_class::<ExtendedCallbackContextRef>()?;
+    m.add_class::<RequestBuilderPartsRef>()?;
     m.add_class::<JsonResponse>()?;
 
     Ok(())
 }
 
 /// 七牛鉴权签名
+///
+/// 可以使用 `Authorization.upload_token(upload_token_provider)` 或 `Authorization.v1(credential_provider)` 或 `Authorization.v2(credential_provider)` 或 `Authorization.download(credential_provider)` 创建七牛鉴权签名
 #[pyclass]
 #[derive(Clone)]
 pub(crate) struct Authorization(qiniu_sdk::http_client::Authorization<'static>);
@@ -99,6 +102,7 @@ impl Authorization {
         Self(qiniu_sdk::http_client::Authorization::download(provider))
     }
 
+    /// 使用指定的鉴权方式对 HTTP 请求进行签名
     #[pyo3(text_signature = "($self, request)")]
     fn sign(&self, request: PyRefMut<SyncHttpRequest>) -> PyResult<()> {
         SyncHttpRequest::with_request_from_ref_mut(request, |request| {
@@ -108,6 +112,7 @@ impl Authorization {
         })
     }
 
+    /// 使用指定的鉴权方式对异步 HTTP 请求进行签名
     #[pyo3(text_signature = "($self, request)")]
     fn async_sign<'p>(&self, request: Py<AsyncHttpRequest>, py: Python<'p>) -> PyResult<&'p PyAny> {
         let auth = self.0.to_owned();
@@ -148,6 +153,8 @@ impl From<Authorization> for qiniu_sdk::http_client::Authorization<'static> {
 }
 
 /// 重试统计信息
+///
+/// 通过 `RetriedStatsInfo()` 创建重试统计信息
 #[pyclass]
 #[pyo3(text_signature = "()")]
 #[derive(Clone)]
@@ -161,34 +168,37 @@ impl RetriedStatsInfo {
     }
 
     /// 提升当前终端地址的重试次数
+    #[pyo3(text_signature = "($self)")]
     fn increase_current_endpoint(&mut self) {
         self.0.increase_current_endpoint();
     }
 
     /// 提升放弃的终端地址的数量
-
+    #[pyo3(text_signature = "($self)")]
     fn increase_abandoned_endpoints(&mut self) {
         self.0.increase_abandoned_endpoints();
     }
 
     /// 提升放弃的终端的 IP 地址的数量
-
+    #[pyo3(text_signature = "($self)")]
     fn increase_abandoned_ips_of_current_endpoint(&mut self) {
         self.0.increase_abandoned_ips_of_current_endpoint()
     }
 
     /// 切换到备选终端地址
-
+    #[pyo3(text_signature = "($self)")]
     fn switch_to_alternative_endpoints(&mut self) {
         self.0.switch_to_alternative_endpoints();
     }
 
     /// 切换终端地址
+    #[pyo3(text_signature = "($self)")]
     fn switch_endpoint(&mut self) {
         self.0.switch_endpoint();
     }
 
     /// 切换当前 IP 地址
+    #[pyo3(text_signature = "($self)")]
     fn switch_ips(&mut self) {
         self.0.switch_ips();
     }
@@ -246,6 +256,8 @@ impl AsRef<qiniu_sdk::http_client::RetriedStatsInfo> for RetriedStatsInfo {
 
 /// 域名解析的接口
 ///
+/// 抽象类
+///
 /// 同时提供阻塞接口和异步接口，异步接口则需要启用 `async` 功能
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
@@ -254,7 +266,7 @@ pub(crate) struct Resolver(Box<dyn qiniu_sdk::http_client::Resolver>);
 #[pymethods]
 impl Resolver {
     /// 解析域名
-    #[pyo3(text_signature = "domain, /, retried_stats_info = None")]
+    #[pyo3(text_signature = "($self, domain, /, retried_stats_info = None)")]
     #[args(retried_stats_info = "None")]
     fn resolve(
         &self,
@@ -277,7 +289,7 @@ impl Resolver {
     }
 
     /// 异步解析域名
-    #[pyo3(text_signature = "domain, /, retried_stats_info = None")]
+    #[pyo3(text_signature = "($self, domain, /, retried_stats_info = None)")]
     #[args(retried_stats_info = "None")]
     fn async_resolve<'p>(
         &self,
@@ -332,7 +344,9 @@ impl qiniu_sdk::http_client::Resolver for Resolver {
 
 /// 简单域名解析器
 ///
-/// 基于 libc 库的域名解析接口实现
+/// 基于 `libc` 库的域名解析接口实现
+///
+/// 通过 `SimpleResolver()` 创建简单域名解析器
 #[pyclass(extends = Resolver)]
 #[pyo3(text_signature = "()")]
 #[derive(Clone)]
@@ -353,7 +367,7 @@ impl SimpleResolver {
 ///
 /// 为一个域名解析器实例提供超时功能
 ///
-/// 默认超时时间为 5 秒
+/// 通过 `SimpleResolver(resolver)` 创建超时域名解析器
 #[pyclass(extends = Resolver)]
 #[pyo3(text_signature = "(resolver, timeout)")]
 #[derive(Clone, Copy)]
@@ -376,6 +390,8 @@ impl TimeoutResolver {
 /// 域名解析随机混淆器
 ///
 /// 基于一个域名解析器实例，但将其返回的解析结果打乱
+///
+/// 通过 `ShuffledResolver(resolver)` 创建域名解析随机混淆器
 #[pyclass(extends = Resolver)]
 #[pyo3(text_signature = "(resolver)")]
 #[derive(Clone, Copy)]
@@ -399,6 +415,8 @@ impl ShuffledResolver {
 /// 为一个域名解析器实例提供内存和文件系统缓存功能
 ///
 /// 默认缓存 120 秒，清理间隔为 120 秒
+///
+/// 通过 `CachedResolver(resolver, auto_persistent = None, cache_lifetime_secs = None, shrink_interval_secs = None)` 创建域名解析缓存器
 #[pyclass(extends = Resolver)]
 #[pyo3(
     text_signature = "(resolver, /, auto_persistent = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -430,6 +448,9 @@ impl CachedResolver {
         )
     }
 
+    /// 从文件系统加载或构建域名解析缓存器
+    ///
+    /// 可以选择是否启用自动持久化缓存功能
     #[staticmethod]
     #[args(
         auto_persistent = "true",
@@ -460,6 +481,9 @@ impl CachedResolver {
         )
     }
 
+    /// 构建域名解析缓存器
+    ///
+    /// 不启用文件系统持久化缓存
     #[staticmethod]
     #[args(cache_lifetime_secs = "None", shrink_interval_secs = "None")]
     #[pyo3(
@@ -505,6 +529,8 @@ impl CachedResolver {
 /// 域名解析串
 ///
 /// 将多个域名解析器串联起来，遍历并找寻第一个可用的解析结果
+///
+/// 通过 `ChainedResolver(resolvers)` 创建域名解析串
 #[pyclass(extends = Resolver)]
 #[pyo3(text_signature = "(resolvers)")]
 #[derive(Clone, Copy)]
@@ -526,6 +552,8 @@ impl ChainedResolver {
 }
 
 /// Trust-DNS 域名解析器
+///
+/// 通过 `TrustDnsResolver()` 创建 Trust-DNS 域名解析器
 #[pyclass(extends = Resolver)]
 #[pyo3(text_signature = "()")]
 #[derive(Clone, Copy)]
@@ -548,6 +576,8 @@ impl TrustDnsResolver {
 }
 
 /// 选择 IP 地址接口
+///
+/// 抽象类
 ///
 /// 还提供了对选择结果的反馈接口，用以修正自身选择逻辑，优化选择结果
 #[pyclass(subclass)]
@@ -740,6 +770,8 @@ impl Chooser {
 /// 直接选择器
 ///
 /// 不做任何筛选，也不接受任何反馈，直接将给出的 IP 地址列表返回
+///
+/// 通过 `DirectChooser()` 创建直接选择器
 #[pyclass(extends = Chooser)]
 #[pyo3(text_signature = "()")]
 #[derive(Clone)]
@@ -759,6 +791,8 @@ impl DirectChooser {
 /// IP 地址选择器
 ///
 /// 包含 IP 地址黑名单，一旦被反馈 API 调用失败，则将所有相关 IP 地址冻结一段时间
+///
+/// 通过 `IpChooser(block_duration_secs = None, shrink_interval_secs = None)` 创建 IP 地址选择器
 #[pyclass(extends = Chooser)]
 #[pyo3(text_signature = "(/, block_duration_secs = None, shrink_interval_secs = None)")]
 #[derive(Clone)]
@@ -783,6 +817,8 @@ impl IpChooser {
 /// 子网选择器
 ///
 /// 包含子网黑名单，一旦被反馈 API 调用失败，则将所有相关子网内 IP 地址冻结一段时间
+///
+/// 通过 `SubnetChooser(block_duration_secs = None, shrink_interval_secs = None, ipv4_netmask_prefix_length = None, ipv6_netmask_prefix_length = None)` 创建子网选择器
 #[pyclass(extends = Chooser)]
 #[pyo3(
     text_signature = "(/, block_duration_secs = None, shrink_interval_secs = None, ipv4_netmask_prefix_length = None, ipv6_netmask_prefix_length = None)"
@@ -829,6 +865,8 @@ impl SubnetChooser {
 /// 随机选择器
 ///
 /// 基于一个选择器实例，但将其返回的选择结果打乱
+///
+/// 通过 `ShuffledChooser(chooser)` 创建随机选择器
 #[pyclass(extends = Chooser)]
 #[pyo3(text_signature = "(chooser)")]
 #[derive(Clone)]
@@ -851,6 +889,8 @@ impl ShuffledChooser {
 ///
 /// 确保 [`Chooser`] 实例不会因为所有可选择的 IP 地址都被屏蔽而导致 HTTP 客户端直接返回错误，
 /// 在内置的 [`Chooser`] 没有返回结果时，将会随机返回一定比例的 IP 地址供 HTTP 客户端做一轮尝试。
+///
+/// 通过 `NeverEmptyHandedChooser(chooser, random_choose_fraction)` 创建永不空手的选择器
 #[pyclass(extends = Chooser)]
 #[pyo3(text_signature = "(chooser, random_choose_fraction)")]
 #[derive(Clone)]
@@ -982,6 +1022,8 @@ impl From<qiniu_sdk::http_client::RetryDecision> for RetryDecision {
 
 /// 请求重试器
 ///
+/// 抽象类
+///
 /// 根据 HTTP 客户端返回的错误，决定是否重试请求，重试决定由 [`RetryDecision`] 定义。
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
@@ -1032,6 +1074,8 @@ impl qiniu_sdk::http_client::RequestRetrier for RequestRetrier {
 /// 永不重试器
 ///
 /// 总是返回不再重试的重试器
+///
+/// 通过 `NeverRetrier()` 创建永不重试器
 #[pyclass(extends = RequestRetrier)]
 #[pyo3(text_signature = "()")]
 #[derive(Copy, Clone)]
@@ -1049,6 +1093,8 @@ impl NeverRetrier {
 }
 
 /// 根据七牛 API 返回的状态码作出重试决定
+///
+/// 通过 `ErrorRetrier()` 创建七牛状态码重试器
 #[pyclass(extends = RequestRetrier)]
 #[pyo3(text_signature = "()")]
 #[derive(Copy, Clone)]
@@ -1068,6 +1114,8 @@ impl ErrorRetrier {
 /// 受限重试器
 ///
 /// 为一个重试器实例增加重试次数上限，即重试次数到达上限时，无论错误是什么，都切换服务器地址或不再予以重试。
+///
+/// 通过 `LimitedRetrier(retrier, retries)` 创建受限重试器
 #[pyclass(extends = RequestRetrier)]
 #[pyo3(text_signature = "(retrier, retries)")]
 #[derive(Copy, Clone)]
@@ -1122,6 +1170,8 @@ impl LimitedRetrier {
 }
 
 /// 退避时长获取接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 pub(crate) struct Backoff(Box<dyn qiniu_sdk::http_client::Backoff>);
@@ -1168,6 +1218,8 @@ impl qiniu_sdk::http_client::Backoff for Backoff {
 }
 
 /// 固定时长的退避时长提供者
+///
+/// 通过 `FixedBackoff(delay_ns)` 创建固定时长的退避时长提供者
 #[pyclass(extends = Backoff)]
 #[pyo3(text_signature = "(delay)")]
 #[derive(Copy, Clone)]
@@ -1195,6 +1247,8 @@ impl FixedBackoff {
 }
 
 /// 指数级增长的退避时长提供者
+///
+/// 通过 `ExponentialBackoff(base_number, base_delay_ns)` 创建指数级增长的退避时长提供者
 #[pyclass(extends = Backoff)]
 #[pyo3(text_signature = "(base_number, base_delay)")]
 #[derive(Copy, Clone)]
@@ -1235,6 +1289,8 @@ impl ExponentialBackoff {
 /// 均匀分布随机化退避时长提供者
 ///
 /// 基于一个退避时长提供者并为其增加随机化范围
+///
+/// 通过 `RandomizedBackoff(base_backoff, minification, magnification)` 创建均匀分布随机化退避时长提供者
 #[pyclass(extends = Backoff)]
 #[pyo3(text_signature = "(base_backoff, minification, magnification)")]
 #[derive(Clone)]
@@ -1281,6 +1337,8 @@ impl RandomizedBackoff {
 }
 
 /// 固定时长的退避时长提供者
+///
+/// 通过 `LimitedBackoff(back_backoff, min_backoff_ns, max_backoff_ns)` 创建固定时长的退避时长提供者
 #[pyclass(extends = Backoff)]
 #[pyo3(text_signature = "(back_backoff, min_backoff_ns, max_backoff_ns)")]
 #[derive(Copy, Clone)]
@@ -1331,6 +1389,8 @@ fn convert_fraction<'a, U: FromPyObject<'a> + Clone + Integer>(
 /// HTTP 客户端
 ///
 /// 用于发送 HTTP 请求的入口。
+///
+/// 创建 `HttpClient(http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)` 创建 HTTP 客户端
 #[pyclass(subclass)]
 #[pyo3(
     text_signature = "(/, http_caller = None, use_https = None, appended_user_agent = None, request_retrier = None, backoff = None, chooser = None, resolver = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
@@ -2169,7 +2229,7 @@ macro_rules! impl_callback_context {
 ///
 /// 用于在回调函数中获取请求相关信息，如请求路径、请求方法、查询参数、请求头等。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 #[derive(Clone)]
 struct SimplifiedCallbackContext(&'static dyn qiniu_sdk::http_client::SimplifiedCallbackContext);
@@ -2260,7 +2320,7 @@ fn on_receive_response_header(
 ///
 /// 基于简化回调函数上下文，并在此基础上增加获取扩展信息的引用和可变引用的方法。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 pub(crate) struct CallbackContextMut(&'static mut dyn qiniu_sdk::http_client::CallbackContext);
 
@@ -2354,7 +2414,7 @@ fn on_ips_chosen(
 ///
 /// 基于回调函数上下文，并在此基础上增加返回部分请求信息的可变引用，以及 UserAgent 和经过解析的 IP 地址列表的获取和设置方法。
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct ExtendedCallbackContextRef(&'static mut dyn qiniu_sdk::http_client::ExtendedCallbackContext);
 
@@ -2498,7 +2558,7 @@ fn on_backoff(
 ///
 /// 包含 HTTP 请求构建器内除请求体和终端地址提供者以外的参数
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 pub(crate) struct RequestBuilderPartsRef(
     &'static mut qiniu_sdk::http_client::RequestBuilderParts<'static>,
@@ -2684,6 +2744,8 @@ impl RequestBuilderPartsRef {
 /// JSON API 响应
 ///
 /// 封装 JSON API 响应相关字段
+///
+/// 该类型没有构造函数，由七牛 API 客户端的 `call()` 方法返回
 #[pyclass(extends = HttpResponseParts)]
 pub(crate) struct JsonResponse(PyObject);
 

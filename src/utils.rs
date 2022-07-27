@@ -19,10 +19,9 @@ use futures::{
     future::{select, Either},
     io::Cursor,
     lock::Mutex as AsyncMutex,
-    pin_mut, ready, AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, FutureExt, SinkExt, StreamExt,
+    pin_mut, ready, AsyncRead, AsyncSeek, AsyncWrite, FutureExt, SinkExt, StreamExt,
 };
 use pyo3::{
-    exceptions::PyIOError,
     prelude::*,
     types::{PyBytes, PyDict, PyTuple},
 };
@@ -551,83 +550,6 @@ impl PythonIoBaseAsyncWrite {
             step: Default::default(),
             py_caller: Arc::new(DirectPyCall),
         }
-    }
-}
-
-pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
-    let m = PyModule::new(py, "utils")?;
-    m.add_class::<Reader>()?;
-    m.add_class::<AsyncReader>()?;
-    Ok(m)
-}
-
-#[pyclass]
-pub(super) struct Reader(Box<dyn qiniu_sdk::upload::DynRead>);
-
-impl<T: Read + Debug + Sync + Send + 'static> From<T> for Reader {
-    fn from(reader: T) -> Self {
-        Self(Box::new(reader))
-    }
-}
-
-#[pymethods]
-impl Reader {
-    /// 读取数据
-    #[pyo3(text_signature = "($self, size = -1, /)")]
-    #[args(size = "-1")]
-    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
-        let mut buf = Vec::new();
-        if let Ok(size) = u64::try_from(size) {
-            buf.reserve(size as usize);
-            (&mut self.0).take(size).read_to_end(&mut buf)
-        } else {
-            self.0.read_to_end(&mut buf)
-        }
-        .map_err(PyIOError::new_err)?;
-        Ok(PyBytes::new(py, &buf))
-    }
-
-    /// 读取所有数据
-    #[pyo3(text_signature = "($self)")]
-    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
-        self.read(-1, py)
-    }
-}
-
-#[pyclass]
-pub(super) struct AsyncReader(Arc<AsyncMutex<dyn qiniu_sdk::upload::DynAsyncRead>>);
-
-impl<T: AsyncRead + Unpin + Debug + Sync + Send + 'static> From<T> for AsyncReader {
-    fn from(reader: T) -> Self {
-        Self(Arc::new(AsyncMutex::new(reader)))
-    }
-}
-
-#[pymethods]
-impl AsyncReader {
-    /// 异步读取数据
-    #[pyo3(text_signature = "($self, size = -1, /)")]
-    #[args(size = "-1")]
-    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
-        let reader = self.0.to_owned();
-        pyo3_asyncio::async_std::future_into_py(py, async move {
-            let mut reader = reader.lock().await;
-            let mut buf = Vec::new();
-            if let Ok(size) = u64::try_from(size) {
-                buf.reserve(size as usize);
-                (&mut *reader).take(size).read_to_end(&mut buf).await
-            } else {
-                reader.read_to_end(&mut buf).await
-            }
-            .map_err(PyIOError::new_err)?;
-            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
-        })
-    }
-
-    /// 异步所有读取数据
-    #[pyo3(text_signature = "($self)")]
-    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
-        self.read(-1, py)
     }
 }
 

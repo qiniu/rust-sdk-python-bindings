@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import credential
+from qiniu_sdk_bindings import credential, upload_token
 import unittest
 import aiofiles
 import asyncio
@@ -62,16 +62,16 @@ class TestCredentialProvider(unittest.TestCase):
         c = get_credential()
         credential.GlobalCredentialProvider.setup(c)
         gc = credential.GlobalCredentialProvider().get()
-        self.assertEqual(gc.access_key(), ACCESS_KEY)
-        self.assertEqual(gc.secret_key(), SECRET_KEY)
+        self.assertEqual(gc.access_key, ACCESS_KEY)
+        self.assertEqual(gc.secret_key, SECRET_KEY)
         credential.GlobalCredentialProvider.clear()
 
     def test_env_credential(self):
         c = get_credential()
         credential.EnvCredentialProvider.setup(c)
         ec = credential.EnvCredentialProvider().get()
-        self.assertEqual(ec.access_key(), ACCESS_KEY)
-        self.assertEqual(ec.secret_key(), SECRET_KEY)
+        self.assertEqual(ec.access_key, ACCESS_KEY)
+        self.assertEqual(ec.secret_key, SECRET_KEY)
         credential.EnvCredentialProvider.clear()
 
     def test_chain_credential(self):
@@ -80,16 +80,16 @@ class TestCredentialProvider(unittest.TestCase):
         c = credential.Credential('ak_static', 'sk_static')
         cc = credential.ChainCredentialsProvider(
             [credential.GlobalCredentialProvider(), credential.EnvCredentialProvider(), c])
-        self.assertEqual(cc.get().access_key(), 'ak_static')
-        self.assertEqual(cc.get().secret_key(), 'sk_static')
+        self.assertEqual(cc.get().access_key, 'ak_static')
+        self.assertEqual(cc.get().secret_key, 'sk_static')
         credential.EnvCredentialProvider.setup(
             credential.Credential('ak_env', 'sk_env'))
-        self.assertEqual(cc.get().access_key(), 'ak_env')
-        self.assertEqual(cc.get().secret_key(), 'sk_env')
+        self.assertEqual(cc.get().access_key, 'ak_env')
+        self.assertEqual(cc.get().secret_key, 'sk_env')
         credential.GlobalCredentialProvider.setup(
             credential.Credential('ak_global', 'sk_global'))
-        self.assertEqual(cc.get().access_key(), 'ak_global')
-        self.assertEqual(cc.get().secret_key(), 'sk_global')
+        self.assertEqual(cc.get().access_key, 'ak_global')
+        self.assertEqual(cc.get().secret_key, 'sk_global')
 
 
 class TestAsyncEtag(unittest.IsolatedAsyncioTestCase):
@@ -129,8 +129,8 @@ class TestAsyncCredentialProvider(unittest.IsolatedAsyncioTestCase):
         c = get_credential()
         credential.GlobalCredentialProvider.setup(c)
         global_credential = await credential.GlobalCredentialProvider().async_get()
-        self.assertEqual(global_credential.access_key(), ACCESS_KEY)
-        self.assertEqual(global_credential.secret_key(), SECRET_KEY)
+        self.assertEqual(global_credential.access_key, ACCESS_KEY)
+        self.assertEqual(global_credential.secret_key, SECRET_KEY)
 
 
 ACCESS_KEY = 'abcdefghklmnopq'

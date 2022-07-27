@@ -39,10 +39,6 @@
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk_bindings.utils
-   :members:
-   :show-inheritance:
-
 .. automodule:: qiniu_sdk_bindings
    :members:
    :show-inheritance:

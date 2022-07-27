@@ -43,6 +43,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 /// 上传策略
 ///
 /// 可以阅读 <https://developer.qiniu.com/kodo/manual/1206/put-policy> 了解七牛安全机制。
+///
+/// 可以使用 `UploadPolicy.new_for_bucket(bucket, lifetime, **fields)` 或 `UploadPolicy.new_for_object(bucket, object, lifetime, **fields)` 或 `UploadPolicy.new_for_objects_with_prefix(bucket, prefix, lifetime, **fields)` 创建上传策略
 #[pyclass]
 #[derive(Clone)]
 struct UploadPolicy(qiniu_sdk::upload_token::UploadPolicy);
@@ -115,39 +117,39 @@ impl UploadPolicy {
         Ok(UploadPolicy(policy))
     }
 
-    /// 存储空间约束
-    #[pyo3(text_signature = "($self)")]
-    fn bucket(&self) -> Option<&str> {
+    /// 获取存储空间约束
+    #[getter]
+    fn get_bucket(&self) -> Option<&str> {
         self.0.bucket()
     }
 
-    /// 对象名称约束或对象名称前缀约束
-    #[pyo3(text_signature = "($self)")]
-    fn key(&self) -> Option<&str> {
+    /// 获取对象名称约束或对象名称前缀约束
+    #[getter]
+    fn get_key(&self) -> Option<&str> {
         self.0.key()
     }
 
     /// 是否是对象名称前缀约束
-    #[pyo3(text_signature = "($self)")]
-    fn use_prefixal_object_key(&self) -> bool {
+    #[getter]
+    fn get_use_prefixal_object_key(&self) -> bool {
         self.0.use_prefixal_object_key()
     }
 
     /// 是否仅允许新增对象，不允许覆盖对象
-    #[pyo3(text_signature = "($self)")]
-    fn is_insert_only(&self) -> bool {
+    #[getter]
+    fn get_is_insert_only(&self) -> bool {
         self.0.is_insert_only()
     }
 
     /// 是否启用 MIME 类型自动检测
-    #[pyo3(text_signature = "($self)")]
-    fn mime_detection_enabled(&self) -> bool {
+    #[getter]
+    fn get_mime_detection_enabled(&self) -> bool {
         self.0.mime_detection_enabled()
     }
 
-    /// 上传凭证过期时间戳
-    #[pyo3(text_signature = "($self)")]
-    fn token_deadline(&self) -> PyResult<Option<u64>> {
+    /// 获取上传凭证过期时间戳
+    #[getter]
+    fn get_token_deadline(&self) -> PyResult<Option<u64>> {
         self.0
             .token_deadline()
             .map(|deadline| {
@@ -160,68 +162,68 @@ impl UploadPolicy {
     }
 
     /// Web 端文件上传成功后，浏览器执行 303 跳转的 URL
-    #[pyo3(text_signature = "($self)")]
-    fn return_url(&self) -> Option<&str> {
+    #[getter]
+    fn get_return_url(&self) -> Option<&str> {
         self.0.return_url()
     }
 
     /// 上传成功后，自定义七牛云最终返回给上传端的数据
-    #[pyo3(text_signature = "($self)")]
-    fn return_body(&self) -> Option<&str> {
+    #[getter]
+    fn get_return_body(&self) -> Option<&str> {
         self.0.return_body()
     }
 
     /// 上传成功后，七牛云向业务服务器发送 POST 请求的 URL 列表
-    #[pyo3(text_signature = "($self)")]
-    fn callback_urls(&self) -> Option<Vec<&str>> {
+    #[getter]
+    fn get_callback_urls(&self) -> Option<Vec<&str>> {
         self.0.callback_urls().map(|url| url.collect())
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的 `Host`
-    #[pyo3(text_signature = "($self)")]
-    fn callback_host(&self) -> Option<&str> {
+    #[getter]
+    fn get_callback_host(&self) -> Option<&str> {
         self.0.callback_host()
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的内容
     ///
     /// 支持魔法变量和自定义变量
-    #[pyo3(text_signature = "($self)")]
-    fn callback_body(&self) -> Option<&str> {
+    #[getter]
+    fn get_callback_body(&self) -> Option<&str> {
         self.0.callback_body()
     }
 
     /// 上传成功后，七牛云向业务服务器发送回调请求时的 `Content-Type`
     ///
     /// 默认为 `application/x-www-form-urlencoded`，也可设置为 `application/json`
-    #[pyo3(text_signature = "($self)")]
-    fn callback_body_type(&self) -> Option<&str> {
+    #[getter]
+    fn get_callback_body_type(&self) -> Option<&str> {
         self.0.callback_body_type()
     }
 
     /// 自定义对象名称
     ///
     /// 支持魔法变量和自定义变量
-    #[pyo3(text_signature = "($self)")]
-    fn save_key(&self) -> Option<&str> {
+    #[getter]
+    fn get_save_key(&self) -> Option<&str> {
         self.0.save_key()
     }
 
     /// 是否忽略客户端指定的对象名称，强制使用自定义对象名称进行文件命名
-    #[pyo3(text_signature = "($self)")]
-    fn is_save_key_forced(&self) -> bool {
+    #[getter]
+    fn get_is_save_key_forced(&self) -> bool {
         self.0.is_save_key_forced()
     }
 
     /// 限定上传文件尺寸的上限，单位为字节
-    #[pyo3(text_signature = "($self)")]
-    fn maximum_file_size(&self) -> Option<u64> {
+    #[getter]
+    fn get_maximum_file_size(&self) -> Option<u64> {
         self.0.file_size_limitation().1
     }
 
     /// 限定上传文件尺寸的下限，单位为字节
-    #[pyo3(text_signature = "($self)")]
-    fn minimum_file_size(&self) -> Option<u64> {
+    #[getter]
+    fn get_minimum_file_size(&self) -> Option<u64> {
         self.0.file_size_limitation().0
     }
 
@@ -229,22 +231,22 @@ impl UploadPolicy {
     ///
     /// 指定本字段值，七牛服务器会侦测文件内容以判断 MIME 类型，再用判断值跟指定值进行匹配，
     /// 匹配成功则允许上传，匹配失败则返回 403 状态码
-    #[pyo3(text_signature = "($self)")]
-    fn mime_types(&self) -> Option<Vec<&str>> {
+    #[getter]
+    fn get_mime_types(&self) -> Option<Vec<&str>> {
         self.0.mime_types().map(|mime_type| mime_type.collect())
     }
 
-    /// 文件类型
-    #[pyo3(text_signature = "($self)")]
-    fn file_type(&self) -> Option<u8> {
+    /// 获取文件类型
+    #[getter]
+    fn get_file_type(&self) -> Option<u8> {
         self.0.file_type().map(|ft| ft.into())
     }
 
-    /// 对象生命周期
+    /// 获取对象生命周期
     ///
     /// 单位为秒，但精确到天
-    #[pyo3(text_signature = "($self)")]
-    fn object_lifetime(&self) -> Option<u64> {
+    #[getter]
+    fn get_object_lifetime(&self) -> Option<u64> {
         self.0.object_lifetime().map(|dur| dur.as_secs())
     }
 
@@ -263,15 +265,15 @@ impl UploadPolicy {
             .transpose()
     }
 
-    /// 获取上传策略的字段迭代器
-    #[pyo3(text_signature = "($self)")]
-    fn keys(&self) -> Vec<&str> {
+    /// 获取上传策略的字段数组
+    #[getter]
+    fn get_keys(&self) -> Vec<&str> {
         self.0.keys().map(|key| key.as_str()).collect()
     }
 
-    /// 获取上传策略的字段值的迭代器
-    #[pyo3(text_signature = "($self)")]
-    fn values(&self) -> PyResult<Vec<PyObject>> {
+    /// 获取上传策略的字段值的数组
+    #[getter]
+    fn get_values(&self) -> PyResult<Vec<PyObject>> {
         self.0
             .values()
             .map(convert_json_value_to_py_object)
@@ -302,14 +304,14 @@ macro_rules! impl_upload_policy_builder {
         #[pymethods]
         impl $name {
             /// 指定上传凭证有效期
-            #[pyo3(text_signature = "($self, lifetime)")]
-            fn token_lifetime(&mut self, lifetime_secs: u64) {
+            #[setter]
+            fn set_token_lifetime(&mut self, lifetime_secs: u64) {
                 self.0.token_lifetime(Duration::from_secs(lifetime_secs));
             }
 
             /// 指定上传凭证过期时间
-            #[pyo3(text_signature = "($self, deadline)")]
-            fn token_deadline(&mut self, timestamp: u64) {
+            #[setter]
+            fn set_token_deadline(&mut self, timestamp: u64) {
                 self.0
                     .token_deadline(SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp));
             }
@@ -333,8 +335,8 @@ macro_rules! impl_upload_policy_builder {
             }
 
             /// 设置文件类型
-            #[pyo3(text_signature = "($self, file_type)")]
-            fn file_type(&mut self, file_type: u8) {
+            #[setter]
+            fn set_file_type(&mut self, file_type: u8) {
                 self.0.file_type(FileType::from(file_type));
             }
 
@@ -342,15 +344,16 @@ macro_rules! impl_upload_policy_builder {
             ///
             /// 通常用于表单上传。
             /// 文件上传成功后会跳转到 `<return_url>?upload_ret=<queryString>`，
-            /// `<queryString>` 包含 `return_body()` 内容。
-            /// 如不设置 `return_url`，则直接将 `return_body()` 的内容返回给客户端
-            #[pyo3(text_signature = "($self, url)")]
-            fn return_url(&mut self, url: &str) {
+            /// `<queryString>` 包含 `return_body` 内容。
+            /// 如不设置 `return_url`，则直接将 `return_body` 的内容返回给客户端
+            #[setter]
+            fn set_return_url(&mut self, url: &str) {
                 self.0.return_url(url);
             }
 
-            #[pyo3(text_signature = "($self, body)")]
-            fn return_body(&mut self, body: &str) {
+            /// 设置上传成功后，自定义七牛云最终返回给上传端的数据
+            #[setter]
+            fn set_return_body(&mut self, body: &str) {
                 self.0.return_body(body);
             }
 
@@ -400,16 +403,16 @@ macro_rules! impl_upload_policy_builder {
             ///
             /// 指定本字段值，七牛服务器会侦测文件内容以判断 MIME 类型，再用判断值跟指定值进行匹配，
             /// 匹配成功则允许上传，匹配失败则返回 403 状态码
-            #[pyo3(text_signature = "($self, content_types)")]
-            fn mime_types(&mut self, content_types: Vec<String>) {
+            #[setter]
+            fn set_mime_types(&mut self, content_types: Vec<String>) {
                 self.0.mime_types(content_types);
             }
 
-            /// 对象生命周期
+            /// 设置对象生命周期
             ///
             /// 单位为秒，但精确到天
-            #[pyo3(text_signature = "($self, lifetime)")]
-            fn object_lifetime(&mut self, lifetime_secs: u64) {
+            #[setter]
+            fn set_object_lifetime(&mut self, lifetime_secs: u64) {
                 self.0.object_lifetime(Duration::from_secs(lifetime_secs));
             }
 
@@ -427,6 +430,8 @@ macro_rules! impl_upload_policy_builder {
 /// 上传策略构建器
 ///
 /// 用于生成上传策略，一旦生成完毕，上传策略将无法被修改
+///
+/// 可以使用 `UploadPolicyBuilder.new_for_bucket(bucket, lifetime, **fields)` 或 `UploadPolicyBuilder.new_for_object(bucket, object, lifetime, **fields)` 或 `UploadPolicyBuilder.new_for_objects_with_prefix(bucket, prefix, lifetime, **fields)` 创建上传策略
 #[pyclass]
 #[derive(Clone)]
 struct UploadPolicyBuilder(qiniu_sdk::upload_token::UploadPolicyBuilder);
@@ -536,7 +541,7 @@ impl UploadPolicyBuilder {
 
 /// 上传策略构建器
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 struct UploadPolicyBuilderRef(&'static mut qiniu_sdk::upload_token::UploadPolicyBuilder);
 
@@ -550,6 +555,8 @@ impl UploadPolicyBuilderRef {
 impl_upload_policy_builder!(UploadPolicyBuilderRef);
 
 /// 上传凭证获取接口
+///
+/// 抽象类
 ///
 /// 可以阅读 <https://developer.qiniu.com/kodo/manual/1208/upload-token> 了解七牛安全机制。
 #[pyclass(subclass)]
@@ -747,9 +754,11 @@ fn convert_to_string_error_to_py_err(err: ToStringError) -> PyErr {
     }
 }
 
-//r 静态上传凭证提供者
+/// 静态上传凭证提供者
 ///
 /// 根据已经被生成好的上传凭证字符串生成上传凭证获取接口的实例，可以将上传凭证解析为 Access Token 和上传策略
+///
+/// 通过 `StaticUploadTokenProvider(upload_token)` 创建静态上传凭证提供者
 #[pyclass(extends = UploadTokenProvider)]
 #[pyo3(text_signature = "(upload_token)")]
 struct StaticUploadTokenProvider;
@@ -768,6 +777,8 @@ impl StaticUploadTokenProvider {
 }
 
 /// 根据上传凭证生成上传策略
+///
+/// 通过 `FromUploadPolicy(upload_policy, credential)` 创建静态上传凭证提供者
 #[pyclass(extends = UploadTokenProvider)]
 #[pyo3(text_signature = "(upload_policy, credential)")]
 struct FromUploadPolicy;
@@ -792,6 +803,8 @@ impl FromUploadPolicy {
 /// 基于存储空间的动态生成
 ///
 /// 根据存储空间的快速生成上传凭证实例
+///
+/// 通过 `BucketUploadTokenProvider(bucket, lifetime_secs, credential, on_policy_generated = None)` 创建静态上传凭证提供者
 #[pyclass(extends = UploadTokenProvider)]
 #[pyo3(text_signature = "(bucket, lifetime_secs, credential, /, on_policy_generated = None)")]
 struct BucketUploadTokenProvider;
@@ -822,6 +835,8 @@ impl BucketUploadTokenProvider {
 /// 基于对象的动态生成
 ///
 /// 根据对象的快速生成上传凭证实例
+///
+/// 通过 `ObjectUploadTokenProvider(bucket, object, lifetime_secs, credential, on_policy_generated = None)` 创建静态上传凭证提供者
 #[pyclass(extends = UploadTokenProvider)]
 #[pyo3(
     text_signature = "(bucket, object, lifetime_secs, credential, /, on_policy_generated = None)"
@@ -864,6 +879,8 @@ pub(super) fn on_policy_generated_callback(
 }
 
 /// 获取 Access Key 的选项
+///
+/// 通过 `GetAccessKeyOptions()` 创建获取 Access Key 的选项
 #[pyclass]
 #[derive(Default, Copy, Clone)]
 #[pyo3(text_signature = "()")]
@@ -886,6 +903,8 @@ impl GetAccessKeyOptions {
 }
 
 /// 获取上传策略的选项
+///
+/// 通过 `GetPolicyOptions()` 创建获取上传策略的选项
 #[pyclass]
 #[derive(Default, Copy, Clone)]
 #[pyo3(text_signature = "()")]
@@ -908,6 +927,8 @@ impl GetPolicyOptions {
 }
 
 /// 获取上传凭证的选项
+///
+/// 通过 `ToStringOptions()` 创建获取上传凭证的选项
 #[pyclass]
 #[derive(Default, Copy, Clone)]
 #[pyo3(text_signature = "()")]

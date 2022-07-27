@@ -20,6 +20,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 }
 
 /// 认证信息
+///
+/// 通过 `Credential(access_key, secret_key)` 创建
 #[pyclass(extends = CredentialProvider)]
 #[derive(Debug, Clone)]
 #[pyo3(text_signature = "(access_key, secret_key)")]
@@ -38,25 +40,16 @@ impl Credential {
         )
     }
 
-    fn __repr__(self_: PyRef<'_, Self>) -> String {
-        let super_ = self_.as_ref();
-        format!("{:?}", super_)
-    }
-
-    fn __str__(self_: PyRef<'_, Self>) -> String {
-        Self::__repr__(self_)
-    }
-
     /// 获取认证信息的 AccessKey
-    #[pyo3(text_signature = "($self)")]
-    fn access_key(self_: PyRef<'_, Self>) -> PyResult<String> {
+    #[getter]
+    fn get_access_key(self_: PyRef<'_, Self>) -> PyResult<String> {
         let super_ = self_.as_ref();
         Ok(super_.0.get(Default::default())?.access_key().to_string())
     }
 
     /// 获取认证信息的 SecretKey
-    #[pyo3(text_signature = "($self)")]
-    fn secret_key(self_: PyRef<'_, Self>) -> PyResult<String> {
+    #[getter]
+    fn get_secret_key(self_: PyRef<'_, Self>) -> PyResult<String> {
         let super_ = self_.as_ref();
         Ok(super_.0.get(Default::default())?.secret_key().to_string())
     }
@@ -257,6 +250,8 @@ impl Credential {
 }
 
 /// 认证信息获取接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Debug, Clone)]
 pub(super) struct CredentialProvider(Box<dyn qiniu_sdk::credential::CredentialProvider>);
@@ -327,6 +322,8 @@ impl qiniu_sdk::credential::CredentialProvider for CredentialProvider {
 }
 
 /// 全局认证信息提供者，可以将认证信息配置在全局变量中。任何全局认证信息提供者实例都可以设置和访问全局认证信息。
+///
+/// 通过 `GlobalCredentialProvider()` 创建
 #[pyclass(extends = CredentialProvider)]
 #[pyo3(text_signature = "()")]
 struct GlobalCredentialProvider;
@@ -361,6 +358,8 @@ impl GlobalCredentialProvider {
 }
 
 /// 环境变量认证信息提供者，可以将认证信息配置在环境变量中。
+///
+/// 通过 `EnvCredentialProvider()` 创建
 #[pyclass(extends = CredentialProvider)]
 #[pyo3(text_signature = "()")]
 struct EnvCredentialProvider;
@@ -397,6 +396,8 @@ impl EnvCredentialProvider {
 /// 认证信息串提供者
 ///
 /// 将多个认证信息提供者串联，遍历并找寻第一个可用认证信息
+///
+/// 通过 `ChainCredentialsProvider([credential1, credential2, credential3, ...])` 创建
 #[pyclass(extends = CredentialProvider)]
 #[derive(Debug, Copy, Clone, Default)]
 #[pyo3(text_signature = "(creds)")]
@@ -428,6 +429,8 @@ impl ChainCredentialsProvider {
 }
 
 /// 获取认证信息的选项
+///
+/// 通过 `GetOptions()` 创建
 #[pyclass]
 #[derive(Default, Copy, Clone)]
 #[pyo3(text_signature = "()")]

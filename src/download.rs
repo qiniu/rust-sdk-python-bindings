@@ -77,6 +77,8 @@ impl From<RetryDecision> for qiniu_sdk::download::RetryDecision {
 }
 
 /// 重试统计信息
+///
+/// 通过 `RetriedStatsInfo()` 创建重试统计信息
 #[pyclass]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "()")]
@@ -131,6 +133,8 @@ impl RetriedStatsInfo {
 
 /// 下载重试器
 ///
+/// 抽象类
+///
 /// 根据 HTTP 客户端返回的错误，决定是否重试请求，重试决定由 `RetryDecision` 定义。
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
@@ -178,8 +182,11 @@ impl qiniu_sdk::download::DownloadRetrier for DownloadRetrier {
 /// 永不重试器
 ///
 /// 总是返回不再重试的重试器
+///
+/// 通过 `NeverRetrier()` 创建永不重试器
 #[pyclass(extends = DownloadRetrier)]
 #[derive(Copy, Clone, Debug)]
+#[pyo3(text_signature = "()")]
 struct NeverRetrier;
 
 #[pymethods]
@@ -195,8 +202,11 @@ impl NeverRetrier {
 }
 
 /// 根据七牛 API 返回的状态码作出重试决定
+///
+/// 通过 `ErrorRetrier()` 创建错误重试器
 #[pyclass(extends = DownloadRetrier)]
 #[derive(Copy, Clone, Debug)]
+#[pyo3(text_signature = "()")]
 struct ErrorRetrier;
 
 #[pymethods]
@@ -213,6 +223,8 @@ impl ErrorRetrier {
 
 /// 生成下载 URL 列表的接口
 ///
+/// 抽象类
+///
 /// 同时提供阻塞接口和异步接口
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
@@ -221,7 +233,7 @@ struct DownloadUrlsGenerator(Box<dyn qiniu_sdk::download::DownloadUrlsGenerator>
 #[pymethods]
 impl DownloadUrlsGenerator {
     /// 生成下载 URL 列表
-    #[pyo3(text_signature = "($self, object_name, ttl_secs=None)")]
+    #[pyo3(text_signature = "($self, object_name, /, ttl_secs=None)")]
     #[args(ttl_secs = "None")]
     fn generate(&self, object_name: &str, ttl_secs: Option<u64>) -> PyResult<Vec<String>> {
         let mut builder = qiniu_sdk::download::GeneratorOptions::builder();
@@ -235,7 +247,7 @@ impl DownloadUrlsGenerator {
     }
 
     /// 异步生成下载 URL 列表
-    #[pyo3(text_signature = "($self, object_name, ttl_secs=None)")]
+    #[pyo3(text_signature = "($self, object_name, /, ttl_secs=None)")]
     #[args(ttl_secs = "None")]
     fn async_generate<'p>(
         &'p self,
@@ -278,6 +290,8 @@ impl qiniu_sdk::download::DownloadUrlsGenerator for DownloadUrlsGenerator {
 }
 
 /// URL 列表签名器
+///
+/// 通过 `UrlsSigner(credential, generator)` 创建 URL 列表签名器
 #[pyclass(extends = DownloadUrlsGenerator)]
 #[derive(Debug, Clone)]
 #[pyo3(text_signature = "(credential, generator)")]
@@ -300,9 +314,11 @@ impl UrlsSigner {
 }
 
 /// 静态公开空间域名下载 URL 列表生成器
+///
+/// 通过 `StaticDomainsUrlsGenerator(endpoints, use_https=None)` 创建静态公开空间域名下载 URL 列表生成器
 #[derive(Debug, Clone)]
 #[pyclass(extends = DownloadUrlsGenerator)]
-#[pyo3(text_signature = "(endpoints, use_https=None)")]
+#[pyo3(text_signature = "(endpoints, /, use_https=None)")]
 struct StaticDomainsUrlsGenerator;
 
 #[pymethods]
@@ -331,9 +347,11 @@ impl StaticDomainsUrlsGenerator {
 }
 
 /// 终端地址下载 URL 列表生成器
+///
+/// 通过 `EndpointsUrlGenerator(endpoints, use_https=None)` 创建终端地址下载 URL 列表生成器
 #[derive(Debug, Clone)]
 #[pyclass(extends = DownloadUrlsGenerator)]
-#[pyo3(text_signature = "(endpoints, use_https=None)")]
+#[pyo3(text_signature = "(endpoints, /, use_https=None)")]
 struct EndpointsUrlGenerator;
 
 #[pymethods]
@@ -350,9 +368,11 @@ impl EndpointsUrlGenerator {
 }
 
 /// 下载管理器
+///
+/// 通过 `DownloadManager(urls_generator, use_https = None, http_client = None)` 创建下载管理器
 #[pyclass]
 #[derive(Debug, Clone)]
-#[pyo3(text_signature = "(urls_generator, use_https = None, http_client = None)")]
+#[pyo3(text_signature = "(urls_generator, /, use_https = None, http_client = None)")]
 struct DownloadManager(qiniu_sdk::download::DownloadManager);
 
 #[pymethods]
@@ -378,7 +398,7 @@ impl DownloadManager {
     /// 获取下载内容阅读器
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -421,7 +441,7 @@ impl DownloadManager {
     /// 需要注意，如果文件已经存在，则会覆盖该文件，如果文件不存在，则会创建该文件。
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, to_path, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, to_path, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -465,7 +485,7 @@ impl DownloadManager {
     /// 将下载的对象内容写入指定的输出流
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, to_object, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, to_object, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -509,7 +529,7 @@ impl DownloadManager {
     /// 异步获取下载内容阅读器
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -554,7 +574,7 @@ impl DownloadManager {
     /// 需要注意，如果文件已经存在，则会覆盖该文件，如果文件不存在，则会创建该文件。
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, to_path, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, to_path, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -602,7 +622,7 @@ impl DownloadManager {
     /// 将下载的对象内容写入指定的输出流
     #[allow(clippy::too_many_arguments)]
     #[pyo3(
-        text_signature = "($self, object_name, to_object, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
+        text_signature = "($self, object_name, to_object, /, range_from=None, range_to=None, retrier=None, headers=None, before_request=None, download_progress=None, response_ok=None, response_error=None)"
     )]
     #[args(
         range_from = "None",
@@ -657,6 +677,8 @@ impl DownloadManager {
 }
 
 /// 下载阅读器
+///
+/// 通过 `download_manager.read()` 创建下载阅读器
 #[pyclass]
 #[derive(Debug)]
 struct DownloadingObjectReader(qiniu_sdk::download::DownloadingObjectReader);
@@ -696,6 +718,8 @@ impl DownloadingObjectReader {
 }
 
 /// 异步下载阅读器
+///
+/// 通过 `download_manager.async_reader()` 创建下载阅读器
 #[pyclass]
 #[derive(Debug)]
 struct AsyncDownloadingObjectReader(

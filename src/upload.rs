@@ -10,13 +10,10 @@ use super::{
         BucketRegionsQueryer, Endpoints, HttpClient, RegionsProvider, RequestBuilderPartsRef,
     },
     upload_token::{on_policy_generated_callback, UploadTokenProvider},
-    utils::{
-        convert_api_call_error, convert_json_value_to_py_object, parse_mime, AsyncReader,
-        PythonIoBase, Reader,
-    },
+    utils::{convert_api_call_error, convert_json_value_to_py_object, parse_mime, PythonIoBase},
 };
 use anyhow::Result as AnyResult;
-use futures::{lock::Mutex as AsyncMutex, AsyncReadExt, AsyncWriteExt};
+use futures::{lock::Mutex as AsyncMutex, AsyncRead, AsyncReadExt, AsyncWriteExt};
 use maybe_owned::MaybeOwned;
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
 use qiniu_sdk::{
@@ -29,7 +26,8 @@ use qiniu_sdk::{
 };
 use sha1::{digest::OutputSizeUser, Sha1};
 use std::{
-    collections::HashMap, io::Read, mem::transmute, num::NonZeroU64, sync::Arc, time::Duration,
+    collections::HashMap, fmt::Debug, io::Read, mem::transmute, num::NonZeroU64, sync::Arc,
+    time::Duration,
 };
 
 pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
@@ -84,10 +82,14 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<SinglePartUploaderPrefer>()?;
     m.add_class::<MultiPartsUploaderPrefer>()?;
     m.add_class::<AutoUploader>()?;
+    m.add_class::<Reader>()?;
+    m.add_class::<AsyncReader>()?;
     Ok(m)
 }
 
 /// 上传凭证签发器
+///
+/// 通过 `UploadTokenSigner.new_upload_token_provider(upload_token_provider)` 或 `UploadTokenSigner.new_credential_provider(credential, bucket_name, lifetime_secs, on_policy_generated = None)` 创建上传凭证签发器
 #[pyclass]
 #[derive(Clone, Debug)]
 struct UploadTokenSigner(qiniu_sdk::upload::UploadTokenSigner);
@@ -134,6 +136,8 @@ impl UploadTokenSigner {
 }
 
 /// 并发数获取接口
+///
+/// 抽象类
 ///
 /// 获取分片上传时的并发数
 #[pyclass(subclass)]
@@ -204,6 +208,8 @@ impl qiniu_sdk::upload::ConcurrencyProvider for ConcurrencyProvider {
 }
 
 /// 固定并发数提供者
+///
+/// 通过 `FixedConcurrencyProvider(concurrency)` 创建固定并发数提供者
 #[pyclass(extends = ConcurrencyProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(concurrency)")]
@@ -225,12 +231,15 @@ impl FixedConcurrencyProvider {
 }
 
 /// 分片大小获取接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 struct DataPartitionProvider(Box<dyn qiniu_sdk::upload::DataPartitionProvider>);
 
 #[pymethods]
 impl DataPartitionProvider {
+    /// 获取分片大小
     #[getter]
     fn get_part_size(&self) -> u64 {
         self.0.part_size().as_u64()
@@ -267,6 +276,14 @@ impl DataPartitionProvider {
         });
         Ok(())
     }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
 }
 
 impl qiniu_sdk::upload::DataPartitionProvider for DataPartitionProvider {
@@ -280,6 +297,8 @@ impl qiniu_sdk::upload::DataPartitionProvider for DataPartitionProvider {
 }
 
 /// 固定分片大小提供者
+///
+/// 通过 `FixedDataPartitionProvider(part_size)` 创建固定分片大小提供者
 #[pyclass(extends = DataPartitionProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(part_size)")]
@@ -303,6 +322,8 @@ impl FixedDataPartitionProvider {
 /// 整数倍分片大小提供者
 ///
 /// 基于一个分片大小提供者实例，如果提供的分片大小不是指定倍数的整数倍，则下调到它的整数倍
+///
+/// 通过 `MultiplyDataPartitionProvider(base, multiply)` 创建整数倍分片大小提供者
 #[pyclass(extends = DataPartitionProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(base, multiply)")]
@@ -327,6 +348,8 @@ impl MultiplyDataPartitionProvider {
 /// 受限的分片大小提供者
 ///
 /// 基于一个分片大小提供者实例，如果提供的分片大小在限制范围外，则调整到限制范围内。
+///
+/// 通过 `LimitedDataPartitionProvider(base, min, max)` 创建受限的分片大小提供者
 #[pyclass(extends = DataPartitionProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(base, min, max)")]
@@ -403,6 +426,8 @@ impl From<ResumablePolicy> for qiniu_sdk::upload::ResumablePolicy {
 }
 
 /// 可恢复策略获取接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 struct ResumablePolicyProvider(Box<dyn qiniu_sdk::upload::ResumablePolicyProvider>);
@@ -503,6 +528,8 @@ impl qiniu_sdk::upload::ResumablePolicyProvider for ResumablePolicyProvider {
 }
 
 /// 总是选择单请求上传
+///
+/// 通过 `AlwaysSinglePart()` 创建单请求上传策略
 #[pyclass(extends = ResumablePolicyProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "()")]
@@ -510,7 +537,7 @@ struct AlwaysSinglePart;
 
 #[pymethods]
 impl AlwaysSinglePart {
-    /// 创建单请求上传
+    /// 创建单请求上传策略
     #[new]
     fn new() -> (Self, ResumablePolicyProvider) {
         (
@@ -521,6 +548,8 @@ impl AlwaysSinglePart {
 }
 
 /// 总是选择分片上传
+///
+/// 通过 `AlwaysMultiParts()` 创建分片上传策略
 #[pyclass(extends = ResumablePolicyProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "()")]
@@ -528,7 +557,7 @@ struct AlwaysMultiParts;
 
 #[pymethods]
 impl AlwaysMultiParts {
-    /// 创建单请求上传
+    /// 创建分片上传策略
     #[new]
     fn new() -> (Self, ResumablePolicyProvider) {
         (
@@ -539,6 +568,8 @@ impl AlwaysMultiParts {
 }
 
 /// 固定阀值的可恢复策略
+///
+/// 通过 `FixedThresholdResumablePolicy(threshold)` 创建固定阀值的可恢复策略
 #[pyclass(extends = ResumablePolicyProvider)]
 #[derive(Copy, Clone, Debug)]
 #[pyo3(text_signature = "(threshold)")]
@@ -546,7 +577,7 @@ struct FixedThresholdResumablePolicy;
 
 #[pymethods]
 impl FixedThresholdResumablePolicy {
-    /// 创建单请求上传
+    /// 创建固定阀值的可恢复策略
     #[new]
     fn new(threshold: u64) -> (Self, ResumablePolicyProvider) {
         (
@@ -561,6 +592,8 @@ impl FixedThresholdResumablePolicy {
 /// 整数倍分片大小的可恢复策略
 ///
 /// 在数据源大小超过分片大小提供者返回的分片大小的整数倍时，将使用分片上传。
+///
+/// 通过 `MultiplePartitionsResumablePolicyProvider(base, multiply)` 创建整数倍分片大小的可恢复策略
 #[pyclass(extends = ResumablePolicyProvider)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "(base, multiply)")]
@@ -589,6 +622,8 @@ impl MultiplePartitionsResumablePolicyProvider {
 /// 数据源 KEY
 ///
 /// 用于区分不同的数据源
+///
+/// 通过 `SourceKey(key)` 创建数据源 KEY
 #[pyclass]
 #[derive(Debug, Clone)]
 struct SourceKey(qiniu_sdk::upload::SourceKey);
@@ -615,6 +650,13 @@ impl SourceKey {
         format!("{:?}", self.0)
     }
 }
+
+/// 断点恢复记录器
+///
+/// 抽象类
+#[pyclass(subclass)]
+#[derive(Clone, Debug)]
+struct ResumableRecorder(Box<dyn qiniu_sdk::upload::ResumableRecorder<HashAlgorithm = Sha1>>);
 
 #[pymethods]
 impl ResumableRecorder {
@@ -741,11 +783,6 @@ impl ResumableRecorder {
     }
 }
 
-/// 断点恢复记录器
-#[pyclass(subclass)]
-#[derive(Clone, Debug)]
-struct ResumableRecorder(Box<dyn qiniu_sdk::upload::ResumableRecorder<HashAlgorithm = Sha1>>);
-
 impl qiniu_sdk::upload::ResumableRecorder for ResumableRecorder {
     type HashAlgorithm = Sha1;
 
@@ -816,6 +853,8 @@ impl qiniu_sdk::upload::ResumableRecorder for ResumableRecorder {
 }
 
 /// 只读介质接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Debug)]
 struct ReadOnlyResumableRecorderMedium(Box<dyn qiniu_sdk::upload::ReadOnlyResumableRecorderMedium>);
@@ -863,6 +902,8 @@ impl<M: qiniu_sdk::upload::ReadOnlyResumableRecorderMedium + 'static> From<M>
 }
 
 /// 追加介质接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Debug)]
 struct AppendOnlyResumableRecorderMedium(
@@ -903,6 +944,8 @@ impl<M: qiniu_sdk::upload::AppendOnlyResumableRecorderMedium + 'static> From<M>
 }
 
 /// 异步只读介质接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Debug)]
 struct ReadOnlyAsyncResumableRecorderMedium(
@@ -954,6 +997,8 @@ impl<M: qiniu_sdk::upload::ReadOnlyAsyncResumableRecorderMedium + 'static> From<
 }
 
 /// 异步追加介质接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Debug)]
 struct AppendOnlyAsyncResumableRecorderMedium(
@@ -1004,6 +1049,8 @@ impl<M: qiniu_sdk::upload::AppendOnlyAsyncResumableRecorderMedium + 'static> Fro
 /// 无断点恢复记录器
 ///
 /// 实现了断点恢复记录器接口，但总是返回找不到记录
+///
+/// 通过 `DummyResumableRecorder()` 创建无断点恢复记录器
 #[pyclass(extends = ResumableRecorder)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "()")]
@@ -1024,9 +1071,11 @@ impl DummyResumableRecorder {
 /// 文件系统断点恢复记录器
 ///
 /// 基于文件系统提供断点恢复记录功能
+///
+/// 通过 `FileSystemResumableRecorder(path = None)` 创建文件系统断点恢复记录器
 #[pyclass(extends = ResumableRecorder)]
 #[derive(Debug, Clone)]
-#[pyo3(text_signature = "(path = None)")]
+#[pyo3(text_signature = "(/, path = None)")]
 struct FileSystemResumableRecorder;
 
 #[pymethods]
@@ -1049,7 +1098,7 @@ macro_rules! impl_uploader {
         #[pymethods]
         impl $name {
             #[pyo3(
-                text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1091,7 +1140,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1133,7 +1182,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1177,7 +1226,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1232,6 +1281,8 @@ macro_rules! impl_uploader {
 }
 
 /// 数据源接口
+///
+/// 抽象类
 ///
 /// 提供上传所用的数据源
 #[pyclass(subclass)]
@@ -1300,8 +1351,11 @@ impl qiniu_sdk::upload::DataSource<Sha1> for DataSource {
 /// 文件数据源
 ///
 /// 基于一个文件实现了数据源接口
+///
+/// 通过 `FileDataSource(path)` 创建文件数据源
 #[pyclass(extends = DataSource)]
 #[derive(Debug, Clone, Copy)]
+#[pyo3(text_signature = "(path)")]
 struct FileDataSource;
 
 #[pymethods]
@@ -1319,8 +1373,11 @@ impl FileDataSource {
 /// 不可寻址的数据源
 ///
 /// 基于一个不可寻址的阅读器实现了数据源接口
+///
+/// 通过 `UnseekableDataSource(source)` 创建不可寻址的数据源
 #[pyclass(extends = DataSource)]
 #[derive(Debug, Clone, Copy)]
+#[pyo3(text_signature = "(source)")]
 struct UnseekableDataSource;
 
 #[pymethods]
@@ -1338,6 +1395,8 @@ impl UnseekableDataSource {
 }
 
 /// 异步数据源接口
+///
+/// 抽象类
 ///
 /// 提供上传所用的数据源
 #[pyclass(subclass)]
@@ -1420,8 +1479,11 @@ impl qiniu_sdk::upload::AsyncDataSource<Sha1> for AsyncDataSource {
 /// 异步文件数据源
 ///
 /// 基于一个文件实现了数据源接口
+///
+/// 通过 `AsyncFileDataSource(path)` 创建异步文件数据源
 #[pyclass(extends = AsyncDataSource)]
 #[derive(Debug, Clone, Copy)]
+#[pyo3(text_signature = "(path)")]
 struct AsyncFileDataSource;
 
 #[pymethods]
@@ -1439,8 +1501,11 @@ impl AsyncFileDataSource {
 /// 不可寻址的异步数据源
 ///
 /// 基于一个不可寻址的异步阅读器实现了异步数据源接口
+///
+/// 通过 `AsyncUnseekableDataSource(source)` 创建不可寻址的异步数据源
 #[pyclass(extends = AsyncDataSource)]
 #[derive(Debug, Clone, Copy)]
+#[pyo3(text_signature = "(source)")]
 struct AsyncUnseekableDataSource;
 
 #[pymethods]
@@ -1458,6 +1523,8 @@ impl AsyncUnseekableDataSource {
 }
 
 /// 追加介质接口
+///
+/// 抽象类
 #[pyclass]
 #[derive(Debug)]
 struct DataSourceReader(qiniu_sdk::upload::DataSourceReader);
@@ -1504,6 +1571,8 @@ impl DataSourceReader {
 }
 
 /// 异步只读介质接口
+///
+/// 抽象类
 #[pyclass]
 #[derive(Debug)]
 struct AsyncDataSourceReader(Arc<AsyncMutex<qiniu_sdk::upload::AsyncDataSourceReader>>);
@@ -1559,10 +1628,12 @@ impl AsyncDataSourceReader {
 }
 
 /// 上传管理器
+///
+/// 通过 `UploadManager(signer, http_client = None, use_https = None, queryer = None, uc_endpoints = None)` 创建上传管理器
 #[pyclass]
 #[derive(Debug, Clone)]
 #[pyo3(
-    text_signature = "(signer, http_client = None, use_https = None, queryer = None, uc_endpoints = None)"
+    text_signature = "(signer, /, http_client = None, use_https = None, queryer = None, uc_endpoints = None)"
 )]
 struct UploadManager(qiniu_sdk::upload::UploadManager);
 
@@ -1601,7 +1672,7 @@ impl UploadManager {
 
     /// 创建表单上传器
     #[pyo3(
-        text_signature = "($self, before_request = None, upload_progress = None, response_ok = None, response_error = None)"
+        text_signature = "($self, /, before_request = None, upload_progress = None, response_ok = None, response_error = None)"
     )]
     #[args(
         response_ok = "None",
@@ -1634,7 +1705,7 @@ impl UploadManager {
 
     /// 创建分片上传器 V1
     #[pyo3(
-        text_signature = "($self, resumable_recorder, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+        text_signature = "($self, resumable_recorder, /, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
     )]
     #[args(
         response_ok = "None",
@@ -1673,7 +1744,7 @@ impl UploadManager {
 
     /// 创建分片上传器 V2
     #[pyo3(
-        text_signature = "($self, resumable_recorder, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+        text_signature = "($self, resumable_recorder, /, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
     )]
     #[args(
         response_ok = "None",
@@ -1713,7 +1784,7 @@ impl UploadManager {
 
     /// 创建自动上传器
     #[pyo3(
-        text_signature = "($self, concurrency_provider = None, data_partition_provider = None, resumable_recorder = None, resumable_policy_provider = None, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
+        text_signature = "($self, /, concurrency_provider = None, data_partition_provider = None, resumable_recorder = None, resumable_policy_provider = None, before_request = None, upload_progress = None, response_ok = None, response_error = None, part_uploaded = None)"
     )]
     #[args(
         concurrency_provider = "None",
@@ -1775,6 +1846,8 @@ impl UploadManager {
 /// 表单上传器
 ///
 /// 通过七牛表单上传 API 一次上传整个数据流
+///
+/// 通过 `upload_manager.form_uploader()` 创建表单上传器
 #[pyclass]
 #[derive(Debug, Clone)]
 struct FormUploader(qiniu_sdk::upload::FormUploader);
@@ -1789,7 +1862,7 @@ macro_rules! impl_multi_parts_uploader {
             ///
             /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
             #[pyo3(
-                text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1875,7 +1948,7 @@ macro_rules! impl_multi_parts_uploader {
             ///
             /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
             #[pyo3(
-                text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1980,6 +2053,8 @@ macro_rules! impl_multi_parts_uploader {
 /// 分片上传器 V1
 ///
 /// 不推荐直接使用这个上传器，而是可以借助 `MultiPartsUploaderScheduler` 来方便地实现分片上传。
+///
+/// 通过 `upload_manager.multi_parts_v1_uploader()` 创建分片上传器 V1
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MultiPartsV1Uploader(qiniu_sdk::upload::MultiPartsV1Uploader);
@@ -1995,6 +2070,8 @@ impl_multi_parts_uploader!(
 /// 分片上传器 V2
 ///
 /// 不推荐直接使用这个上传器，而是可以借助 `MultiPartsUploaderScheduler` 来方便地实现分片上传。
+///
+/// 通过 `upload_manager.multi_parts_v2_uploader()` 创建分片上传器 V2
 #[pyclass]
 #[derive(Debug, Clone)]
 struct MultiPartsV2Uploader(qiniu_sdk::upload::MultiPartsV2Uploader);
@@ -2059,6 +2136,8 @@ macro_rules! impl_initialized_object {
 }
 
 /// 被 分片上传器 V1 初始化的分片信息
+///
+/// 通过 `multi_parts_uploader_v1.initialize_parts()` 创建
 #[pyclass]
 struct MultiPartsV1UploaderInitializedObject(
     <qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::InitializedParts,
@@ -2066,6 +2145,8 @@ struct MultiPartsV1UploaderInitializedObject(
 impl_initialized_object!(MultiPartsV1UploaderInitializedObject);
 
 /// 被 分片上传器 V1 异步初始化的分片信息
+///
+/// 通过 `multi_parts_uploader_v1.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
 struct AsyncMultiPartsV1UploaderInitializedObject(
@@ -2074,6 +2155,8 @@ struct AsyncMultiPartsV1UploaderInitializedObject(
 impl_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
 
 /// 被 分片上传器 V2 初始化的分片信息
+///
+/// 通过 `multi_parts_uploader_v2.initialize_parts()` 创建
 #[pyclass]
 struct MultiPartsV2UploaderInitializedObject(
     <qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::InitializedParts,
@@ -2081,6 +2164,8 @@ struct MultiPartsV2UploaderInitializedObject(
 impl_initialized_object!(MultiPartsV2UploaderInitializedObject);
 
 /// 被 分片上传器 V2 异步初始化的分片信息
+///
+/// 通过 `multi_parts_uploader_v2.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
 struct AsyncMultiPartsV2UploaderInitializedObject(
@@ -2128,30 +2213,40 @@ macro_rules! impl_uploaded_part {
 }
 
 /// 已经通过 分片上传器 V1 上传的分片信息
+///
+/// 通过 `multi_parts_uploader_v1.upload_part()` 创建
 #[pyclass]
 #[derive(Clone, Debug)]
 struct MultiPartsV1UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::UploadedPart);
 impl_uploaded_part!(MultiPartsV1UploaderUploadedPart);
 
 /// 已经通过 分片上传器 V1 异步上传的分片信息
+///
+/// 通过 `multi_parts_uploader_v1.async_upload_part()` 创建
 #[pyclass]
 #[derive(Clone, Debug)]
 struct AsyncMultiPartsV1UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncUploadedPart);
 impl_uploaded_part!(AsyncMultiPartsV1UploaderUploadedPart);
 
 /// 已经通过 分片上传器 V2 上传的分片信息
+///
+/// 通过 `multi_parts_uploader_v2.upload_part()` 创建
 #[pyclass]
 #[derive(Clone, Debug)]
 struct MultiPartsV2UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::UploadedPart);
 impl_uploaded_part!(MultiPartsV2UploaderUploadedPart);
 
 /// 已经通过 分片上传器 V2 异步上传的分片信息
+///
+/// 通过 `multi_parts_uploader_v2.async_upload_part()` 创建
 #[pyclass]
 #[derive(Clone, Debug)]
 struct AsyncMultiPartsV2UploaderUploadedPart(<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncUploadedPart);
 impl_uploaded_part!(AsyncMultiPartsV2UploaderUploadedPart);
 
 /// 分片上传调度器接口
+///
+/// 抽象类
 ///
 /// 负责分片上传的调度，包括初始化分片信息、上传分片、完成分片上传。
 #[pyclass(subclass)]
@@ -2175,7 +2270,7 @@ impl MultiPartsUploaderScheduler {
 
     /// 上传数据源
     #[pyo3(
-        text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2218,7 +2313,7 @@ impl MultiPartsUploaderScheduler {
 
     /// 异步上传数据源
     #[pyo3(
-        text_signature = "($self, source, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2266,8 +2361,11 @@ impl_uploader!(MultiPartsUploaderScheduler);
 /// 串行分片上传调度器
 ///
 /// 不启动任何线程，仅在本地串行上传分片。
+///
+/// 通过 `SerialMultiPartsUploaderScheduler(multi_parts_uploader)` 创建串行分片上传调度器
 #[pyclass(extends = MultiPartsUploaderScheduler)]
 #[derive(Debug, Copy, Clone)]
+#[pyo3(text_signature = "(uploader)")]
 struct SerialMultiPartsUploaderScheduler;
 
 #[pymethods]
@@ -2292,8 +2390,11 @@ impl SerialMultiPartsUploaderScheduler {
 /// 并行分片上传调度器
 ///
 /// 在阻塞模式下创建线程池负责上传分片，在异步模式下使用 `async-std` 的线程池负责上传分片。
+///
+/// 通过 `ConcurrentMultiPartsUploaderScheduler(multi_parts_uploader)` 创建串行分片上传调度器
 #[pyclass(extends = MultiPartsUploaderScheduler)]
 #[derive(Debug, Copy, Clone)]
+#[pyo3(text_signature = "(uploader)")]
 struct ConcurrentMultiPartsUploaderScheduler;
 
 #[pymethods]
@@ -2358,15 +2459,18 @@ fn on_before_request(
 }
 
 /// 上传进度信息
+///
+/// 通过 `UploadingProgressInfo(transferred_bytes, total_bytes = None)` 创建上传进度信息
 #[pyclass]
-#[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
 #[derive(Clone, Copy, Debug)]
+#[pyo3(text_signature = "(transferred_bytes, /, total_bytes = None)")]
 struct UploadingProgressInfo(qiniu_sdk::upload::UploadingProgressInfo);
 
 #[pymethods]
 impl UploadingProgressInfo {
     #[new]
-    pub(super) fn new(transferred_bytes: u64, total_bytes: Option<u64>) -> Self {
+    #[args(total_bytes = "None")]
+    fn new(transferred_bytes: u64, total_bytes: Option<u64>) -> Self {
         Self(qiniu_sdk::upload::UploadingProgressInfo::new(
             transferred_bytes,
             total_bytes,
@@ -2405,6 +2509,8 @@ impl ToPyObject for UploadingProgressInfo {
 }
 
 /// 已经上传的分片信息
+///
+/// 该类型没有构造函数，仅限于在回调函数中使用
 #[pyclass]
 #[derive(Clone, Copy, Debug)]
 struct UploadedPartInfo {
@@ -2503,6 +2609,17 @@ enum MultiPartsUploaderSchedulerPrefer {
     Concurrent = 1,
 }
 
+#[pymethods]
+impl MultiPartsUploaderSchedulerPrefer {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
 impl From<MultiPartsUploaderSchedulerPrefer>
     for qiniu_sdk::upload::MultiPartsUploaderSchedulerPrefer
 {
@@ -2526,6 +2643,17 @@ enum SinglePartUploaderPrefer {
     Form = 0,
 }
 
+#[pymethods]
+impl SinglePartUploaderPrefer {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
 impl From<SinglePartUploaderPrefer> for qiniu_sdk::upload::SinglePartUploaderPrefer {
     fn from(prefer: SinglePartUploaderPrefer) -> Self {
         match prefer {
@@ -2544,6 +2672,17 @@ enum MultiPartsUploaderPrefer {
     V2 = 2,
 }
 
+#[pymethods]
+impl MultiPartsUploaderPrefer {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
 impl From<MultiPartsUploaderPrefer> for qiniu_sdk::upload::MultiPartsUploaderPrefer {
     fn from(prefer: MultiPartsUploaderPrefer) -> Self {
         match prefer {
@@ -2556,6 +2695,8 @@ impl From<MultiPartsUploaderPrefer> for qiniu_sdk::upload::MultiPartsUploaderPre
 /// 自动上传器
 ///
 /// 使用设置的各种提供者，将文件或是二进制流数据上传。
+///
+/// 通过 `upload_manager.auto_uploader()` 创建自动上传器
 #[pyclass]
 #[derive(Debug, Clone)]
 struct AutoUploader(qiniu_sdk::upload::AutoUploader);
@@ -2563,7 +2704,7 @@ struct AutoUploader(qiniu_sdk::upload::AutoUploader);
 #[pymethods]
 impl AutoUploader {
     #[pyo3(
-        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2614,7 +2755,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2665,7 +2806,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, path, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2718,7 +2859,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, reader, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2824,4 +2965,97 @@ fn make_auto_uploader_object_params(
         builder.multi_parts_uploader_prefer(multi_parts_uploader_prefer.into());
     }
     Ok(builder.build())
+}
+
+/// 数据阅读器
+///
+/// 通过 `resumable_policy_provider.get_policy_from_reader()` 创建
+#[pyclass]
+struct Reader(Box<dyn qiniu_sdk::upload::DynRead>);
+
+#[pymethods]
+impl Reader {
+    /// 读取数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        let mut buf = Vec::new();
+        if let Ok(size) = u64::try_from(size) {
+            buf.reserve(size as usize);
+            (&mut self.0).take(size).read_to_end(&mut buf)
+        } else {
+            self.0.read_to_end(&mut buf)
+        }
+        .map_err(PyIOError::new_err)?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// 读取所有数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyBytes> {
+        self.read(-1, py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl<T: Read + Debug + Sync + Send + 'static> From<T> for Reader {
+    fn from(reader: T) -> Self {
+        Self(Box::new(reader))
+    }
+}
+
+/// 异步数据阅读器
+///
+/// 通过 `resumable_policy_provider.get_policy_from_async_reader()` 创建
+#[pyclass]
+
+struct AsyncReader(Arc<AsyncMutex<dyn qiniu_sdk::upload::DynAsyncRead>>);
+
+impl<T: AsyncRead + Unpin + Debug + Sync + Send + 'static> From<T> for AsyncReader {
+    fn from(reader: T) -> Self {
+        Self(Arc::new(AsyncMutex::new(reader)))
+    }
+}
+
+#[pymethods]
+impl AsyncReader {
+    /// 异步读取数据
+    #[pyo3(text_signature = "($self, size = -1, /)")]
+    #[args(size = "-1")]
+    fn read<'a>(&mut self, size: i64, py: Python<'a>) -> PyResult<&'a PyAny> {
+        let reader = self.0.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let mut reader = reader.lock().await;
+            let mut buf = Vec::new();
+            if let Ok(size) = u64::try_from(size) {
+                buf.reserve(size as usize);
+                (&mut *reader).take(size).read_to_end(&mut buf).await
+            } else {
+                reader.read_to_end(&mut buf).await
+            }
+            .map_err(PyIOError::new_err)?;
+            Python::with_gil(|py| Ok(PyBytes::new(py, &buf).to_object(py)))
+        })
+    }
+
+    /// 异步所有读取数据
+    #[pyo3(text_signature = "($self)")]
+    fn readall<'a>(&mut self, py: Python<'a>) -> PyResult<&'a PyAny> {
+        self.read(-1, py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }

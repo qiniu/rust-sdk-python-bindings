@@ -22,39 +22,12 @@ class TestEtag(unittest.TestCase):
         stream = io.BytesIO(_data_of_size(5 * (1 << 20)))
         self.assertEqual(etag.etag_of(stream), 'lg-Eb5KFCuZn-cUfj_oS2PPOU9xy')
 
-    def test_etag_with_parts(self):
-        stream = io.BytesIO(_data_of_size(1 << 20))
-        self.assertEqual(etag.etag_with_parts(
-            stream, [1 << 20]), 'Foyl8onxBLWeRLL5oItRJphv6i4b')
-
-    def test_middle_size_with_parts(self):
-        stream = io.BytesIO(_data_of_size((1 << 19) + (1 << 23)))
-        self.assertEqual(
-            etag.etag_with_parts(stream, [1 << 19, 1 << 23]),
-            'nt82yvMNHlNgZ4H8_A_4de84mr2f'
-        )
-
-    def test_large_size_with_parts(self):
-        stream = io.BytesIO(_data_of_size(9 << 20))
-        self.assertEqual(
-            etag.etag_with_parts(stream, [1 << 22, 1 << 22, 1 << 20]),
-            'ljgVjMtyMsOgIySv79U8Qz4TrUO4'
-        )
-
 
 class TestEtagV1(unittest.TestCase):
     def test_large_size_etag_v1(self):
-        for e in [etag.EtagV1(), etag.Etag(etag.EtagVersion.V1)]:
-            e.write(_data_of_size(5 * (1 << 20)))
-            self.assertEqual(e.finalize(), 'lg-Eb5KFCuZn-cUfj_oS2PPOU9xy')
-
-
-class TestEtagV2(unittest.TestCase):
-    def test_large_size_etag_v2(self):
-        for e in [etag.EtagV2(), etag.Etag(etag.EtagVersion.V2)]:
-            e.write(_data_of_size(1 << 19))
-            e.write(_data_of_size(1 << 23))
-            self.assertEqual(e.finalize(), 'nt82yvMNHlNgZ4H8_A_4de84mr2f')
+        e = etag.EtagV1()
+        e.write(_data_of_size(5 * (1 << 20)))
+        self.assertEqual(e.finalize(), 'lg-Eb5KFCuZn-cUfj_oS2PPOU9xy')
 
 
 class TestAsyncEtag(unittest.IsolatedAsyncioTestCase):
@@ -79,30 +52,6 @@ class TestAsyncEtag(unittest.IsolatedAsyncioTestCase):
             await f.write(_data_of_size(5 * (1 << 20)))
             await f.seek(0, io.SEEK_SET)
             self.assertEqual(await etag.async_etag_of(f), 'lg-Eb5KFCuZn-cUfj_oS2PPOU9xy')
-
-    async def test_etag_with_parts(self):
-        async with aiofiles.tempfile.TemporaryFile('wb+') as f:
-            await f.write(_data_of_size(1 << 20))
-            await f.seek(0, io.SEEK_SET)
-            self.assertEqual(await etag.async_etag_with_parts(f, [1 << 20]), 'Foyl8onxBLWeRLL5oItRJphv6i4b')
-
-    async def test_middle_size_with_parts(self):
-        async with aiofiles.tempfile.TemporaryFile('wb+') as f:
-            await f.write(_data_of_size((1 << 19) + (1 << 23)))
-            await f.seek(0, io.SEEK_SET)
-            self.assertEqual(
-                await etag.async_etag_with_parts(f, [1 << 19, 1 << 23]),
-                'nt82yvMNHlNgZ4H8_A_4de84mr2f'
-            )
-
-    async def test_large_size_with_parts(self):
-        async with aiofiles.tempfile.TemporaryFile('wb+') as f:
-            await f.write(_data_of_size(9 << 20))
-            await f.seek(0, io.SEEK_SET)
-            self.assertEqual(
-                await etag.async_etag_with_parts(f, [1 << 22, 1 << 22, 1 << 20]),
-                'ljgVjMtyMsOgIySv79U8Qz4TrUO4'
-            )
 
 
 def _data_of_size(size):

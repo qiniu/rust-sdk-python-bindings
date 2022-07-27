@@ -49,6 +49,8 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
 
 /// HTTP 请求处理接口
 ///
+/// 抽象类
+///
 /// 实现该接口，即可处理所有七牛 SDK 发送的 HTTP 请求
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
@@ -105,6 +107,14 @@ impl HttpCaller {
             })
         })
     }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl qiniu_sdk::http::HttpCaller for HttpCaller {
@@ -126,10 +136,12 @@ impl qiniu_sdk::http::HttpCaller for HttpCaller {
 /// 七牛 Isahc HTTP 客户端实现
 ///
 /// 基于 Isahc 库提供 HTTP 客户端接口实现
+///
+/// 通过 `IsahcHttpCaller()` 创建 Isahc HTTP 客户端
 #[pyclass(extends = HttpCaller)]
 #[pyo3(text_signature = "()")]
 #[derive(Clone)]
-pub(super) struct IsahcHttpCaller;
+struct IsahcHttpCaller;
 
 #[pymethods]
 impl IsahcHttpCaller {
@@ -145,6 +157,8 @@ impl IsahcHttpCaller {
 }
 
 /// 数据传输进度信息
+///
+/// 通过 `TransferProgressInfo(transferred_bytes, total_bytes)` 创建数据传输进度信息
 #[pyclass]
 #[pyo3(text_signature = "(transferred_bytes, total_bytes)")]
 #[derive(Clone, Copy, Debug)]
@@ -197,6 +211,8 @@ impl ToPyObject for TransferProgressInfo {
 /// HTTP 请求信息
 ///
 /// 不包含请求体信息
+///
+/// 通过 `HttpRequestParts(url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建 HTTP 请求信息
 #[pyclass(subclass)]
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
@@ -368,6 +384,14 @@ impl HttpRequestParts {
         *self.0.on_receive_response_header_mut() = Some(on_receive_response_header(callback));
         Ok(())
     }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl Deref for HttpRequestParts {
@@ -387,6 +411,8 @@ impl DerefMut for HttpRequestParts {
 /// 阻塞 HTTP 请求
 ///
 /// 封装 HTTP 请求相关字段
+///
+/// 通过 `SyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建阻塞 HTTP 请求
 #[pyclass(extends = HttpRequestParts)]
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
@@ -471,6 +497,8 @@ impl SyncHttpRequest {
 /// 异步 HTTP 请求
 ///
 /// 封装 HTTP 请求相关字段
+///
+/// 通过 `AsyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建异步 HTTP 请求
 #[pyclass(extends = HttpRequestParts)]
 #[pyo3(
     text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
@@ -592,6 +620,17 @@ pub(super) enum Version {
     HTTP_3 = 30,
 }
 
+#[pymethods]
+impl Version {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
 impl From<qiniu_sdk::http::Version> for Version {
     fn from(version: qiniu_sdk::http::Version) -> Self {
         match version {
@@ -618,6 +657,8 @@ impl From<Version> for qiniu_sdk::http::Version {
 }
 
 /// HTTP 响应的指标信息
+///
+/// 通过 `Metrics(total_duration_ns = None, name_lookup_duration_ns = None, connect_duration_ns = None, secure_connect_duration_ns = None, redirect_duration_ns = None, transfer_duration_ns = None)` 创建 HTTP 响应的指标信息
 #[pyclass]
 #[derive(Clone)]
 #[pyo3(
@@ -858,6 +899,8 @@ macro_rules! impl_http_response_parts_mut {
 
 /// HTTP 响应基础信息
 ///
+/// 抽象类
+///
 /// 不包含响应体信息
 #[pyclass(subclass)]
 pub(super) struct HttpResponseParts(qiniu_sdk::http::ResponseParts);
@@ -885,7 +928,7 @@ impl From<qiniu_sdk::http::ResponseParts> for HttpResponseParts {
 ///
 /// 不包含响应体信息
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 pub(super) struct HttpResponsePartsRef(&'static qiniu_sdk::http::ResponseParts);
 
@@ -901,7 +944,7 @@ impl_http_response_parts_ref!(HttpResponsePartsRef);
 ///
 /// 不包含响应体信息
 ///
-/// 该类型仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
+/// 该类型没有构造函数，仅限于在回调函数中使用，仅限于在回调函数中使用，一旦移出回调函数，对其做任何操作都将引发无法预期的后果。
 #[pyclass]
 pub(super) struct HttpResponsePartsMut(&'static mut qiniu_sdk::http::ResponseParts);
 
@@ -990,6 +1033,8 @@ macro_rules! impl_response_body {
 /// 阻塞 HTTP 响应
 ///
 /// 封装 HTTP 响应相关字段
+///
+/// 通过 `SyncHttpResponse(status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)` 创建阻塞 HTTP 响应
 #[pyclass(extends = HttpResponseParts)]
 #[pyo3(
     text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"
@@ -1092,6 +1137,8 @@ impl From<qiniu_sdk::http::SyncResponseBody> for SyncHttpResponse {
 /// 异步 HTTP 响应
 ///
 /// 封装 HTTP 响应相关字段
+///
+/// 通过 `AsyncHttpResponse(status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)` 创建异步 HTTP 响应
 #[pyclass(extends = HttpResponseParts)]
 #[pyo3(
     text_signature = "(/, status_code = None, headers = None, version = None, server_ip = None, server_port = None, body = None, metrics = None)"

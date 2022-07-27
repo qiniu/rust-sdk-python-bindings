@@ -41,14 +41,21 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<ModifyObjectStatus>()?;
     m.add_class::<ModifyObjectMetadata>()?;
     m.add_class::<ModifyObjectLifeCycle>()?;
+    m.add_class::<ObjectsLister>()?;
     m.add_class::<ListVersion>()?;
     m.add_class::<ObjectsIterator>()?;
     m.add_class::<AsyncObjectsIterator>()?;
     m.add_class::<BatchSizeProvider>()?;
+    m.add_class::<FixedBatchSizeProvider>()?;
+    m.add_class::<BatchOperations>()?;
+    m.add_class::<BatchOperationsIterator>()?;
+    m.add_class::<AsyncBatchOperationsIterator>()?;
     Ok(m)
 }
 
 /// 七牛对象管理器
+///
+/// 通过 `ObjectsManager(credential, use_https = None, http_client = None, uc_endpoints = None, queryer = None)` 创建七牛对象管理器
 #[pyclass]
 #[pyo3(
     text_signature = "(credential, /, use_https = None, http_client = None, uc_endpoints = None, queryer = None)"
@@ -110,6 +117,8 @@ impl ObjectsManager {
 }
 
 /// 七牛存储空间管理器
+///
+/// 由 `objects_manager.bucket()` 方法创建
 #[pyclass]
 #[derive(Clone, Debug)]
 struct Bucket(qiniu_sdk::objects::Bucket);
@@ -165,6 +174,11 @@ impl Bucket {
     fn __iter__(&self, py: Python<'_>) -> PyResult<ObjectsIterator> {
         self.list(None, None, None, None, None, None, None, None)
             .__iter__(py)
+    }
+
+    fn __aiter__(&self, py: Python<'_>) -> PyResult<AsyncObjectsIterator> {
+        self.list(None, None, None, None, None, None, None, None)
+            .__aiter__(py)
     }
 
     /// 获取对象元信息
@@ -407,6 +421,7 @@ impl Bucket {
         Py::new(py, (modify_object_life_cycle, operation_provider))
     }
 
+    /// 对空间内多个对象发起批量操作
     #[pyo3(
         text_signature = "($self, before_request_callback = None, after_response_ok_callback = None)"
     )]
@@ -444,6 +459,8 @@ impl Bucket {
 }
 
 /// 对象操作提供者接口
+///
+/// 抽象类
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 struct OperationProvider {
@@ -503,6 +520,8 @@ struct StatObject {
 
 #[pymethods]
 impl StatObject {
+    /// 阻塞发起对象元信息获取请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -513,6 +532,8 @@ impl StatObject {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象元信息获取请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let stat_object = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -554,6 +575,8 @@ struct CopyObject {
 
 #[pymethods]
 impl CopyObject {
+    /// 阻塞发起对象复制请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -564,6 +587,8 @@ impl CopyObject {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象复制请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let copy_object = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -612,6 +637,8 @@ struct MoveObject {
 
 #[pymethods]
 impl MoveObject {
+    /// 阻塞发起对象移动请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -622,6 +649,8 @@ impl MoveObject {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象移动请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let move_object = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -656,7 +685,7 @@ impl MoveObject {
     }
 }
 
-/// 对象元信息删除操作构建器
+/// 对象删除操作构建器
 ///
 /// 可以通过 `bucket.delete_object()` 方法获取该构建器。
 #[pyclass(extends = OperationProvider)]
@@ -668,6 +697,8 @@ struct DeleteObject {
 
 #[pymethods]
 impl DeleteObject {
+    /// 阻塞发起对象删除请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -678,6 +709,8 @@ impl DeleteObject {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象删除请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let delete_object = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -720,6 +753,8 @@ struct UnfreezeObject {
 
 #[pymethods]
 impl UnfreezeObject {
+    /// 阻塞发起对象解冻请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -730,6 +765,8 @@ impl UnfreezeObject {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象解冻请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let unfreeze_object = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -776,6 +813,8 @@ struct SetObjectType {
 
 #[pymethods]
 impl SetObjectType {
+    /// 阻塞发起对象类型设置请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -786,6 +825,8 @@ impl SetObjectType {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起对象类型设置请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let set_object_type = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -821,7 +862,7 @@ impl SetObjectType {
 
 /// 修改对象状态构建器
 ///
-/// 可以通过 `bucket::modify_object_status()` 方法获取该构建器。
+/// 可以通过 `bucket.modify_object_status()` 方法获取该构建器。
 #[pyclass(extends = OperationProvider)]
 #[derive(Clone, Debug)]
 struct ModifyObjectStatus {
@@ -832,6 +873,8 @@ struct ModifyObjectStatus {
 
 #[pymethods]
 impl ModifyObjectStatus {
+    /// 阻塞发起修改对象状态请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -842,6 +885,8 @@ impl ModifyObjectStatus {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起修改对象状态请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let modify_object_status = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -877,7 +922,7 @@ impl ModifyObjectStatus {
 
 /// 修改对象元信息构建器
 ///
-/// 可以通过 `bucket::modify_object_metadata()` 方法获取该构建器。
+/// 可以通过 `bucket.modify_object_metadata()` 方法获取该构建器。
 #[pyclass(extends = OperationProvider)]
 #[derive(Clone, Debug)]
 struct ModifyObjectMetadata {
@@ -890,6 +935,8 @@ struct ModifyObjectMetadata {
 
 #[pymethods]
 impl ModifyObjectMetadata {
+    /// 阻塞发起修改对象元信息请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -900,6 +947,8 @@ impl ModifyObjectMetadata {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起修改对象元信息请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let modify_object_metadata = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -939,7 +988,7 @@ impl ModifyObjectMetadata {
 
 /// 修改对象生命周期构建器
 ///
-/// 可以通过 `bucket::modify_object_life_cycle()` 方法获取该构建器。
+/// 可以通过 `bucket.modify_object_life_cycle()` 方法获取该构建器。
 #[pyclass(extends = OperationProvider)]
 #[derive(Clone, Debug)]
 struct ModifyObjectLifeCycle {
@@ -953,6 +1002,8 @@ struct ModifyObjectLifeCycle {
 
 #[pymethods]
 impl ModifyObjectLifeCycle {
+    /// 阻塞发起修改对象生命周期请求
+    #[pyo3(text_signature = "($self)")]
     fn call(&self, py: Python<'_>) -> PyResult<Py<JsonResponse>> {
         let resp = py.allow_threads(|| {
             self.make_operation()
@@ -963,6 +1014,8 @@ impl ModifyObjectLifeCycle {
         make_json_response(parts, body.as_ref(), py)
     }
 
+    /// 异步发起修改对象生命周期请求
+    #[pyo3(text_signature = "($self)")]
     fn async_call<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let modify_object_metadata = self.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -1050,7 +1103,7 @@ fn make_after_response_error_callback(
 
 /// 列举操作迭代器
 ///
-/// 可以通过 `Bucket::list` 方法获取该迭代器。
+/// 可以通过 `bucket.list()` 方法获取该迭代器。
 #[pyclass]
 #[derive(Debug)]
 struct ObjectsLister {
@@ -1238,6 +1291,17 @@ enum ListVersion {
     V2 = 2,
 }
 
+#[pymethods]
+impl ListVersion {
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+}
+
 impl From<ListVersion> for qiniu_sdk::objects::ListVersion {
     fn from(version: ListVersion) -> Self {
         match version {
@@ -1258,18 +1322,16 @@ impl From<qiniu_sdk::objects::ListVersion> for ListVersion {
 }
 
 /// 最大批量操作数获取接口
+///
+/// 抽象类
+///
+/// 通过 `BatchSizeProvider(size)` 创建固定的最大批量操作数
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 struct BatchSizeProvider(Box<dyn qiniu_sdk::objects::BatchSizeProvider>);
 
 #[pymethods]
 impl BatchSizeProvider {
-    /// 创建固定的最大批量操作数
-    #[new]
-    fn new(size: usize) -> Self {
-        Self(Box::new(size))
-    }
-
     /// 获取最大批量操作数
     #[getter]
     fn get_batch_size(&self) -> usize {
@@ -1283,7 +1345,27 @@ impl qiniu_sdk::objects::BatchSizeProvider for BatchSizeProvider {
     }
 }
 
+/// 固定的最大批量操作数
+///
+/// 通过 `FixedBatchSizeProvider(size)` 创建固定的最大批量操作数
+#[pyclass(extends = BatchSizeProvider)]
+#[derive(Clone, Debug)]
+#[pyo3(text_signature = "(usize)")]
+struct FixedBatchSizeProvider;
+
+#[pymethods]
+impl FixedBatchSizeProvider {
+    #[new]
+    fn new(size: usize) -> (Self, BatchSizeProvider) {
+        (Self, BatchSizeProvider(Box::new(size)))
+    }
+}
+
 /// 批量操作
+///
+/// 先添加对象操作，全部添加完毕后，调用迭代器即可对操作结果进行遍历
+///
+/// 通过 `bucket.batch_ops()` 创建批量操作
 #[pyclass]
 #[derive(Debug)]
 struct BatchOperations {
@@ -1293,6 +1375,7 @@ struct BatchOperations {
 
 #[pymethods]
 impl BatchOperations {
+    /// 设置最大批量操作数提供者
     #[setter]
     fn set_batch_size(&mut self, size: BatchSizeProvider) {
         self.operations.batch_size(size);

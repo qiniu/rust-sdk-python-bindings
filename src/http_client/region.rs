@@ -31,6 +31,8 @@ pub(super) fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 /// 域名和端口号
 ///
 /// 用来表示一个七牛服务器的地址，端口号是可选的，如果不提供，则根据传输协议判定默认的端口号。
+///
+/// 通过 `DomainWithPort(domain, port = None)` 创建域名和端口号
 #[pyclass]
 #[pyo3(text_signature = "(domain, port = None)")]
 #[derive(Clone)]
@@ -80,6 +82,8 @@ impl DomainWithPort {
 /// IP 地址和端口号
 ///
 /// 用来表示一个七牛服务器的地址，端口号是可选的，如果不提供，则根据传输协议判定默认的端口号。
+///
+/// 通过 `IpAddrWithPort(ip, port = None)` 创建域名和端口号
 #[pyclass]
 #[pyo3(text_signature = "(ip, port = None)")]
 #[derive(Clone)]
@@ -130,6 +134,8 @@ impl IpAddrWithPort {
 /// 终端地址
 ///
 /// 用来表示一个域名和端口号，或 IP 地址和端口号。
+///
+/// 通过 `Endpoint(domain_or_ip_addr, port = None)` 创建域名和端口号
 #[pyclass]
 #[pyo3(text_signature = "(domain_or_ip_addr, port = None)")]
 #[derive(Clone)]
@@ -189,8 +195,9 @@ impl From<Endpoint> for qiniu_sdk::http_client::Endpoint {
     }
 }
 
+/// 七牛服务名称
 #[pyclass]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ServiceName {
     /// 上传服务
     Up = 0,
@@ -212,6 +219,17 @@ pub(crate) enum ServiceName {
 
     /// S3 入口服务
     S3 = 6,
+}
+
+#[pymethods]
+impl ServiceName {
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
 }
 
 impl From<ServiceName> for qiniu_sdk::http_client::ServiceName {
@@ -246,6 +264,8 @@ impl From<qiniu_sdk::http_client::ServiceName> for ServiceName {
 /// 终端地址列表获取接口
 ///
 /// 同时提供阻塞获取接口和异步获取接口，异步获取接口则需要启用 `async` 功能
+///
+/// 通过 `EndpointsProvider(regions_provider)` 创建终端地址列表获取接口
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions_provider)")]
@@ -260,7 +280,8 @@ impl EndpointsProvider {
         ))
     }
 
-    #[pyo3(text_signature = "(/, service_names = None)")]
+    /// 获取终端地址列表
+    #[pyo3(text_signature = "($self, /, service_names = None)")]
     fn get(
         &self,
         service_names: Option<Vec<ServiceName>>,
@@ -281,7 +302,8 @@ impl EndpointsProvider {
         Self::make_initializer(endpoints, py)
     }
 
-    #[pyo3(text_signature = "(/, service_names = None)")]
+    /// 异步获取终端地址列表
+    #[pyo3(text_signature = "($self, /, service_names = None)")]
     fn async_get<'p>(
         &self,
         service_names: Option<Vec<ServiceName>>,
@@ -350,6 +372,8 @@ impl EndpointsProvider {
 /// 终端地址列表
 ///
 /// 存储一个七牛服务的多个终端地址，包含主要地址列表和备选地址列表
+///
+/// 通过 `Endpoints(preferred_endpoints, alternative_endpoints = None)` 创建终端地址列表
 #[pyclass(extends = EndpointsProvider)]
 #[pyo3(text_signature = "(preferred_endpoints, alternative_endpoints = None)")]
 #[derive(Clone)]
@@ -412,6 +436,8 @@ impl From<qiniu_sdk::http_client::Endpoints> for Endpoints {
 /// 可以获取一个区域也可以获取多个区域
 ///
 /// 同时提供阻塞获取接口和异步获取接口，异步获取接口则需要启用 `async` 功能
+///
+/// 通过 `RegionsProvider(regions)` 创建区域信息获取接口
 #[pyclass(subclass)]
 #[derive(Clone, Debug)]
 #[pyo3(text_signature = "(regions)")]
@@ -431,7 +457,8 @@ impl RegionsProvider {
         }
     }
 
-    #[pyo3(text_signature = "()")]
+    /// 获取七牛区域信息
+    #[pyo3(text_signature = "($self)")]
     fn get(&self, py: Python<'_>) -> PyResult<Py<Region>> {
         let region = py
             .allow_threads(|| self.0.get(Default::default()))
@@ -440,7 +467,8 @@ impl RegionsProvider {
         Self::make_initializer(region, py)
     }
 
-    #[pyo3(text_signature = "()")]
+    /// 获取多个七牛区域信息
+    #[pyo3(text_signature = "($self)")]
     fn get_all(&self, py: Python<'_>) -> PyResult<Vec<Py<Region>>> {
         let regions = py
             .allow_threads(|| self.0.get_all(Default::default()))
@@ -452,7 +480,8 @@ impl RegionsProvider {
         Ok(regions)
     }
 
-    #[pyo3(text_signature = "()")]
+    /// 异步获取七牛区域信息
+    #[pyo3(text_signature = "($self)")]
     fn async_get<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let provider = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -465,7 +494,8 @@ impl RegionsProvider {
         })
     }
 
-    #[pyo3(text_signature = "()")]
+    /// 异步获取多个七牛区域信息
+    #[pyo3(text_signature = "($self)")]
     fn async_get_all<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
         let provider = self.0.to_owned();
         pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -547,6 +577,8 @@ impl From<RegionsProvider> for Box<dyn qiniu_sdk::http_client::RegionsProvider> 
 /// 七牛存储区域
 ///
 /// 提供七牛不同服务的终端地址列表
+///
+/// 通过 `Region(region_id, s3_region_id = None, up_preferred_endpoints = None, up_alternative_endpoints = None, io_preferred_endpoints = None, io_alternative_endpoints = None, uc_preferred_endpoints = None, uc_preferred_endpoints = None, rs_preferred_endpoints = None, rs_alternative_endpoints = None, rsf_preferred_endpoints = None, rsf_alternative_endpoints = None, s3_preferred_endpoints = None, s3_alternative_endpoints = None, api_preferred_endpoints = None, api_alternative_endpoints = None)` 创建七牛存储区域
 #[pyclass(extends = RegionsProvider)]
 #[pyo3(
     text_signature = "(region_id, /, s3_region_id = None, up_preferred_endpoints = None, up_alternative_endpoints = None, io_preferred_endpoints = None, io_alternative_endpoints = None, uc_preferred_endpoints = None, uc_preferred_endpoints = None, rs_preferred_endpoints = None, rs_alternative_endpoints = None, rsf_preferred_endpoints = None, rsf_alternative_endpoints = None, s3_preferred_endpoints = None, s3_alternative_endpoints = None, api_preferred_endpoints = None, api_alternative_endpoints = None)"
@@ -798,6 +830,8 @@ impl Region {
 }
 
 /// 七牛所有区域信息查询器
+///
+/// 通过 `AllRegionsProvider(credential_provider, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)` 创建七牛所有区域信息查询器
 #[pyclass(extends = RegionsProvider)]
 #[pyo3(
     text_signature = "(credential_provider, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -839,6 +873,9 @@ impl AllRegionsProvider {
         )
     }
 
+    /// 从文件系统加载或构建七牛所有区域信息查询器
+    ///
+    /// 可以选择是否启用自动持久化缓存功能
     #[staticmethod]
     #[pyo3(
         text_signature = "(credential_provider, path, /, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -877,6 +914,9 @@ impl AllRegionsProvider {
         )
     }
 
+    /// 构建七牛所有区域信息查询器
+    ///
+    /// 不启用文件系统持久化缓存
     #[staticmethod]
     #[pyo3(
         text_signature = "(credential_provider, /, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -931,6 +971,8 @@ impl AllRegionsProvider {
 }
 
 /// 存储空间相关区域查询构建器
+///
+/// 通过 `BucketRegionsQueryer(auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)` 创建存储空间相关区域查询构建器
 #[pyclass]
 #[pyo3(
     text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -967,6 +1009,9 @@ impl BucketRegionsQueryer {
         )
     }
 
+    /// 从文件系统加载或构建存储空间相关区域查询器
+    ///
+    /// 可以选择是否启用自动持久化缓存功能
     #[staticmethod]
     #[args(
         auto_persistent = "true",
@@ -998,6 +1043,9 @@ impl BucketRegionsQueryer {
         )
     }
 
+    /// 构建存储空间相关区域查询器
+    ///
+    /// 不启用文件系统持久化缓存
     #[staticmethod]
     #[args(
         use_https = "true",
@@ -1026,6 +1074,7 @@ impl BucketRegionsQueryer {
         )
     }
 
+    /// 查询存储空间相关区域
     #[pyo3(text_signature = "($self, access_key, bucket_name)")]
     fn query(&self, access_key: &str, bucket_name: &str) -> RegionsProvider {
         RegionsProvider(Box::new(self.0.query(access_key, bucket_name)))
@@ -1069,6 +1118,8 @@ impl From<qiniu_sdk::http_client::BucketRegionsQueryer> for BucketRegionsQueryer
 /// 存储空间绑定域名查询器
 ///
 /// 查询该存储空间绑定的域名。
+///
+/// 通过 `BucketDomainsQueryer(auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)` 创建存储空间绑定域名查询器
 #[pyclass]
 #[pyo3(
     text_signature = "(/, auto_persistent = True, use_https = True, uc_endpoints = None, cache_lifetime_secs = None, shrink_interval_secs = None)"
@@ -1105,6 +1156,9 @@ impl BucketDomainsQueryer {
         )
     }
 
+    /// 从文件系统加载或构建存储空间绑定域名查询器
+    ///
+    /// 可以选择是否启用自动持久化缓存功能
     #[staticmethod]
     #[args(
         auto_persistent = "true",
@@ -1136,6 +1190,9 @@ impl BucketDomainsQueryer {
         )
     }
 
+    /// 构建存储空间绑定域名查询器
+    ///
+    /// 不启用文件系统持久化缓存
     #[staticmethod]
     #[args(
         use_https = "true",
@@ -1164,6 +1221,7 @@ impl BucketDomainsQueryer {
         )
     }
 
+    /// 查询存储空间相关域名
     #[pyo3(text_signature = "($self, access_key, bucket_name)")]
     fn query(&self, credential: CredentialProvider, bucket_name: &str) -> EndpointsProvider {
         EndpointsProvider(Box::new(self.0.query(credential, bucket_name)))

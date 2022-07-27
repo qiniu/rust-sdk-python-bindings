@@ -88,7 +88,7 @@ impl Client {
     }
     #[doc = "发出阻塞请求"]
     #[pyo3(
-        text_signature = "(endpoints, credential, /, use_https, version, headers, query, query_pairs, appended_user_agent, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, response_error, before_backoff, after_backoff)"
+        text_signature = "(endpoints, credential, /, use_https = None, version = None, headers = None, query = None, query_pairs = None, appended_user_agent = None, json = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         r#use_https = "None",
@@ -187,7 +187,7 @@ impl Client {
     }
     #[doc = "发出异步请求"]
     #[pyo3(
-        text_signature = "(endpoints, credential, /, use_https, version, headers, query, query_pairs, appended_user_agent, json, uploading_progress, receive_response_status, receive_response_header, to_resolve_domain, domain_resolved, to_choose_ips, ips_chosen, before_request_signed, after_request_signed, response_ok, response_error, before_backoff, after_backoff)"
+        text_signature = "(endpoints, credential, /, use_https = None, version = None, headers = None, query = None, query_pairs = None, appended_user_agent = None, json = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, to_resolve_domain = None, domain_resolved = None, to_choose_ips = None, ips_chosen = None, before_request_signed = None, after_request_signed = None, response_ok = None, response_error = None, before_backoff = None, after_backoff = None)"
     )]
     #[args(
         r#use_https = "None",
