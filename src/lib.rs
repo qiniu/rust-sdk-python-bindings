@@ -16,7 +16,6 @@ use pyo3::prelude::*;
 #[pymodule]
 #[pyo3(name = "qiniu_sdk_bindings")]
 fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    pyo3_log::try_init().ok();
     exceptions::register(py, m)?;
     initialize_user_agent(py)?;
 
