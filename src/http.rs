@@ -799,6 +799,12 @@ impl Metrics {
     }
 }
 
+impl From<qiniu_sdk::http::Metrics> for Metrics {
+    fn from(metrics: qiniu_sdk::http::Metrics) -> Self {
+        Self(metrics)
+    }
+}
+
 impl AsRef<qiniu_sdk::http::Metrics> for Metrics {
     fn as_ref(&self) -> &qiniu_sdk::http::Metrics {
         &self.0
