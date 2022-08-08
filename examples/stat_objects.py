@@ -3,8 +3,7 @@
 
 from optparse import OptionParser
 import sys
-import qiniu_sdk_bindings
-from qiniu_sdk_bindings import objects, credential
+from qiniu_sdk import objects, credential
 
 
 def main():
@@ -27,19 +26,15 @@ def main():
     cred = credential.Credential(options.access_key, options.secret_key)
     objects_manager = objects.ObjectsManager(cred)
     bucket = objects_manager.bucket(options.bucket_name)
-    batch_ops = bucket.batch_ops()
+    ops = []
     for line in sys.stdin:
-        batch_ops.add_operation(bucket.stat_object(line.strip()))
-    it = iter(batch_ops)
-    while True:
-        try:
-            object = next(it)
-            print(object)
-        except qiniu_sdk_bindings.QiniuApiCallError as e:
+        ops.append(bucket.stat_object(line.strip()))
+    for result in bucket.batch_ops(ops):
+        if result.error:
             print('Code: %d, Message: %s' %
-                  (e.args[0].status_code, e.args[0].message))
-        except StopIteration:
-            break
+                  (result.error.args[0].status_code, result.error.args[0].message))
+        else:
+            print(result.data)
 
 
 if __name__ == '__main__':

@@ -14,8 +14,8 @@ use exceptions::QiniuUserAgentInitializeError;
 use pyo3::prelude::*;
 
 #[pymodule]
-#[pyo3(name = "qiniu_sdk_bindings")]
-fn qiniu_sdk_bindings(py: Python<'_>, m: &PyModule) -> PyResult<()> {
+#[pyo3(name = "qiniu_sdk")]
+fn qiniu_sdk(py: Python<'_>, m: &PyModule) -> PyResult<()> {
     exceptions::register(py, m)?;
     initialize_user_agent(py)?;
 

@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from optparse import OptionParser
-import qiniu_sdk_bindings
-from qiniu_sdk_bindings import credential, http_client
+import qiniu_sdk
+from qiniu_sdk import credential, http_client
 
 
 def main():
@@ -25,15 +25,15 @@ def main():
         for region in regions:
             print('region_id: %s' % (region.region_id))
             print('s3_region_id: %s' % (region.s3_region_id))
-            print('up: %s' % (region.up))
-            print('io: %s' % (region.io))
-            print('uc: %s' % (region.uc))
-            print('rs: %s' % (region.rs))
-            print('rsf: %s' % (region.rsf))
-            print('api: %s' % (region.api))
-            print('s3: %s' % (region.s3))
+            print('up: %s' % (region.up.preferred))
+            print('io: %s' % (region.io.preferred))
+            print('uc: %s' % (region.uc.preferred))
+            print('rs: %s' % (region.rs.preferred))
+            print('rsf: %s' % (region.rsf.preferred))
+            print('api: %s' % (region.api.preferred))
+            print('s3: %s' % (region.s3.preferred))
             print('---')
-    except qiniu_sdk_bindings.QiniuApiCallError as e:
+    except qiniu_sdk.QiniuApiCallError as e:
         print('Code: %d, Message: %s, X-Reqid: %s' %
               (e.args[0].status_code, e.args[0].message, e.args[0].x_reqid))
 

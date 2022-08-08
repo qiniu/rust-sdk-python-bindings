@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider, QiniuApiCallError
+from qiniu_sdk import credential, http, http_client, QiniuInvalidDomainWithPortError, QiniuInvalidIpAddrWithPortError, QiniuEmptyRegionsProvider, QiniuApiCallError
 from aiohttp import web
 import os
 import io

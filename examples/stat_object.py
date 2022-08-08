@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from optparse import OptionParser
-import qiniu_sdk_bindings
-from qiniu_sdk_bindings import objects, credential
+import qiniu_sdk
+from qiniu_sdk import objects, credential
 
 
 def main():
@@ -33,7 +33,7 @@ def main():
     try:
         response = bucket.stat_object(options.object_name).call()
         print(response.body)
-    except qiniu_sdk_bindings.QiniuApiCallError as e:
+    except qiniu_sdk.QiniuApiCallError as e:
         print('Code: %d, Message: %s, X-Reqid: %s' %
               (e.args[0].status_code, e.args[0].message, e.args[0].x_reqid))
 

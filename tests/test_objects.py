@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import objects, credential, http_client
+from qiniu_sdk import objects, credential, http_client
 from aiohttp import web
 import unittest
 import base64
@@ -225,13 +225,15 @@ class TestObjectsOperation(unittest.IsolatedAsyncioTestCase):
             objects_manager = objects.ObjectsManager(credential.Credential(
                 'ak', 'sk'), use_https=False, queryer=queryer)
             bucket = objects_manager.bucket('fakebucket')
-            ops = bucket.batch_ops()
-            ops.add_operation(bucket.stat_object('object_1'))
-            ops.add_operation(bucket.stat_object('object_2'))
-            ops.add_operation(bucket.stat_object('object_3'))
+            ops = bucket.batch_ops([
+                bucket.stat_object('object_1'),
+                bucket.stat_object('object_2'),
+                bucket.stat_object('object_3'),
+            ])
             count = 0
             async for result in ops:
-                self.assertEqual(result, {'fsize': 1024, 'hash': 'fakehash'})
+                self.assertEqual(
+                    result.data, {'fsize': 1024, 'hash': 'fakehash'})
                 count += 1
             self.assertEqual(count, 3)
         finally:

@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import upload, credential, http_client, QiniuIoError
+from qiniu_sdk import upload, credential, http_client, QiniuIoError
 from aiohttp import web
 import unittest
 import io

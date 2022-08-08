@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from optparse import OptionParser
-import qiniu_sdk_bindings
-from qiniu_sdk_bindings import credential, http_client, apis
+import qiniu_sdk
+from qiniu_sdk import credential, http_client, apis
 
 
 def main():
@@ -26,7 +26,7 @@ def main():
             http_client.EndpointsProvider(region), cred,)
         for bucket in response.body:
             print(bucket)
-    except qiniu_sdk_bindings.QiniuApiCallError as e:
+    except qiniu_sdk.QiniuApiCallError as e:
         print('Code: %d, Message: %s, X-Reqid: %s' %
               (e.args[0].status_code, e.args[0].message, e.args[0].x_reqid))
 

@@ -1,4 +1,4 @@
-from qiniu_sdk_bindings import credential, download, http_client
+from qiniu_sdk import credential, download, http_client
 from aiohttp import web
 import io
 import unittest

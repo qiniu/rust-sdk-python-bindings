@@ -91,7 +91,7 @@ impl Mods {
     }
 
     pub(super) fn write_sphinx_index(&self, mod_name: &str, src_dir_path: &Path) -> IoResult<()> {
-        return write_sphinx_index(src_dir_path, mod_name, &["qiniu_sdk_bindings"], &self.root);
+        return write_sphinx_index(src_dir_path, mod_name, &["qiniu_sdk"], &self.root);
 
         fn write_sphinx_index(
             dir_path: &Path,

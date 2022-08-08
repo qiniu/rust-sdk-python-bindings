@@ -1,7 +1,7 @@
 use super::{
     credential::CredentialProvider,
     exceptions::{QiniuApiCallError, QiniuDownloadError, QiniuEmptyEndpoints},
-    http::{HttpResponsePartsMut, TransferProgressInfo},
+    http::HttpResponsePartsMut,
     http_client::{CallbackContextMut, EndpointsProvider, HttpClient, RequestBuilderPartsRef},
     utils::{convert_api_call_error, extract_endpoints, parse_headers, PythonIoBase},
 };
@@ -27,6 +27,7 @@ pub(super) fn create_module(py: Python<'_>) -> PyResult<&PyModule> {
     m.add_class::<DownloadManager>()?;
     m.add_class::<DownloadingObjectReader>()?;
     m.add_class::<AsyncDownloadingObjectReader>()?;
+    m.add_class::<DownloadingProgressInfo>()?;
     Ok(m)
 }
 
@@ -812,6 +813,59 @@ impl DownloadManager {
     }
 }
 
+/// 下载传度信息
+///
+/// 通过 `DownloadingProgressInfo(transferred_bytes, total_bytes)` 创建下载传度信息
+#[pyclass]
+#[pyo3(text_signature = "(transferred_bytes, /, total_bytes = None)")]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DownloadingProgressInfo {
+    transferred_bytes: u64,
+    total_bytes: Option<u64>,
+}
+
+#[pymethods]
+impl DownloadingProgressInfo {
+    #[new]
+    #[args(total_bytes = "None")]
+    pub(super) fn new(transferred_bytes: u64, total_bytes: Option<u64>) -> Self {
+        Self {
+            transferred_bytes,
+            total_bytes,
+        }
+    }
+
+    /// 获取已经传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_transferred_bytes(&self) -> u64 {
+        self.transferred_bytes
+    }
+
+    /// 获取总共需要传输的数据量
+    ///
+    /// 单位为字节
+    #[getter]
+    fn get_total_bytes(&self) -> Option<u64> {
+        self.total_bytes
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self)
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+}
+
+impl ToPyObject for DownloadingProgressInfo {
+    fn to_object(&self, py: Python<'_>) -> PyObject {
+        self.to_owned().into_py(py)
+    }
+}
+
 fn on_before_request(
     callback: PyObject,
 ) -> impl Fn(&mut qiniu_sdk::http_client::RequestBuilderParts<'_>) -> AnyResult<()> + Send + Sync + 'static
@@ -824,12 +878,13 @@ fn on_before_request(
 
 fn on_download_progress(
     callback: PyObject,
-) -> impl Fn(qiniu_sdk::http::TransferProgressInfo) -> AnyResult<()> + Send + Sync + 'static {
+) -> impl Fn(qiniu_sdk::download::DownloadingProgressInfo) -> AnyResult<()> + Send + Sync + 'static
+{
     move |progress| {
         Python::with_gil(|py| {
             callback.call1(
                 py,
-                (TransferProgressInfo::new(
+                (DownloadingProgressInfo::new(
                     progress.transferred_bytes(),
                     progress.total_bytes(),
                 ),),

@@ -423,30 +423,43 @@ impl Bucket {
 
     /// 对空间内多个对象发起批量操作
     #[pyo3(
-        text_signature = "($self, before_request_callback = None, after_response_ok_callback = None)"
+        text_signature = "($self, operations, batch_size = None, before_request_callback = None, after_response_ok_callback = None, after_response_error_callback = None)"
     )]
-    #[args(before_request_callback = "None", after_response_ok_callback = "None")]
+    #[args(
+        batch_size = "None",
+        before_request_callback = "None",
+        after_response_ok_callback = "None",
+        after_response_error_callback = "None"
+    )]
     fn batch_ops(
         &self,
+        operations: Vec<OperationProvider>,
+        batch_size: Option<BatchSizeProvider>,
         before_request_callback: Option<PyObject>,
         after_response_ok_callback: Option<PyObject>,
         after_response_error_callback: Option<PyObject>,
     ) -> BatchOperations {
         let bucket = Arc::pin(self.to_owned());
         #[allow(unsafe_code)]
-        let mut operations = unsafe {
+        let mut batch_ops = unsafe {
             transmute::<_, qiniu_sdk::objects::BatchOperations<'static>>(bucket.0.batch_ops())
         };
+        for operation in operations {
+            batch_ops.add_operation(operation);
+        }
+        if let Some(batch_size) = batch_size {
+            batch_ops.batch_size(batch_size);
+        }
         if let Some(callback) = before_request_callback {
-            operations.before_request_callback(make_before_request_callback(callback));
+            batch_ops.before_request_callback(make_before_request_callback(callback));
         }
         if let Some(callback) = after_response_ok_callback {
-            operations.after_response_ok_callback(make_after_response_ok_callback(callback));
+            batch_ops.after_response_ok_callback(make_after_response_ok_callback(callback));
         }
         if let Some(callback) = after_response_error_callback {
-            operations.after_response_error_callback(make_after_response_error_callback(callback));
+            batch_ops.after_response_error_callback(make_after_response_error_callback(callback));
         }
-        BatchOperations { bucket, operations }
+        BatchOperations { bucket, batch_ops }
     }
 
     fn __str__(&self) -> String {
@@ -1213,6 +1226,12 @@ impl ObjectsIterator {
             .transpose()
     }
 
+    /// 获取上一次列举返回的位置标记
+    #[getter]
+    fn get_marker(&self) -> Option<&str> {
+        self.iter.marker()
+    }
+
     fn __str__(&self) -> String {
         self.__repr__()
     }
@@ -1267,6 +1286,16 @@ impl AsyncObjectsIterator {
         })
         .ok()
         .map(|any| any.into_py(py))
+    }
+
+    /// 获取上一次列举返回的位置标记
+    #[pyo3(text_signature = "($self)")]
+    fn marker<'p>(&self, py: Python<'p>) -> PyResult<&'p PyAny> {
+        let inner = self.inner.to_owned();
+        pyo3_asyncio::async_std::future_into_py(py, async move {
+            let stream = inner.stream.lock().await;
+            Ok(stream.get_ref().marker().map(|s| s.to_owned()))
+        })
     }
 
     fn __str__(&self) -> String {
@@ -1363,33 +1392,19 @@ impl FixedBatchSizeProvider {
 
 /// 批量操作
 ///
-/// 先添加对象操作，全部添加完毕后，调用迭代器即可对操作结果进行遍历
-///
 /// 通过 `bucket.batch_ops()` 创建批量操作
 #[pyclass]
 #[derive(Debug)]
 struct BatchOperations {
     bucket: Pin<Arc<Bucket>>,
-    operations: qiniu_sdk::objects::BatchOperations<'static>,
+    batch_ops: qiniu_sdk::objects::BatchOperations<'static>,
 }
 
 #[pymethods]
 impl BatchOperations {
-    /// 设置最大批量操作数提供者
-    #[setter]
-    fn set_batch_size(&mut self, size: BatchSizeProvider) {
-        self.operations.batch_size(size);
-    }
-
-    /// 添加对象操作提供者
-    #[pyo3(text_signature = "($self, operation)")]
-    fn add_operation(&mut self, operation: OperationProvider) {
-        self.operations.add_operation(operation);
-    }
-
     fn __iter__(&mut self) -> BatchOperationsIterator {
         BatchOperationsIterator {
-            iter: self.operations.call(),
+            iter: self.batch_ops.call(),
             _bucket: self.bucket.to_owned(),
         }
     }
@@ -1397,7 +1412,7 @@ impl BatchOperations {
     fn __aiter__(&mut self) -> AsyncBatchOperationsIterator {
         AsyncBatchOperationsIterator {
             inner: Arc::new(AsyncBatchOperationsIteratorInner {
-                stream: AsyncMutex::new(self.operations.async_call().peekable()),
+                stream: AsyncMutex::new(self.batch_ops.async_call().peekable()),
                 ended: AtomicBool::new(false),
             }),
             _bucket: self.bucket.to_owned(),
@@ -1413,6 +1428,34 @@ impl BatchOperations {
     }
 }
 
+//// 批量操作结果
+#[pyclass]
+#[derive(Debug)]
+struct BatchOperationResult(PyResult<PyObject>);
+
+#[pymethods]
+impl BatchOperationResult {
+    /// 获取数据
+    #[getter]
+    fn get_data(&self, py: Python<'_>) -> Option<PyObject> {
+        self.0.as_ref().ok().map(|data| data.clone_ref(py))
+    }
+
+    /// 获取错误信息
+    #[getter]
+    fn get_error(&self) -> Option<&PyErr> {
+        self.0.as_ref().err()
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.0)
+    }
+}
+
 /// 批量操作结果迭代器
 #[pyclass]
 #[derive(Debug)]
@@ -1423,15 +1466,16 @@ struct BatchOperationsIterator {
 
 #[pymethods]
 impl BatchOperationsIterator {
-    fn __next__(&mut self) -> PyResult<Option<PyObject>> {
-        self.iter
-            .next()
-            .map(|result| {
-                result.map(|entry| convert_json_value_to_py_object(&serde_json::Value::from(entry)))
-            })
-            .transpose()
-            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))?
-            .transpose()
+    fn __next__(&mut self) -> PyResult<Option<BatchOperationResult>> {
+        Ok(self.iter.next().map(|result| {
+            BatchOperationResult(
+                result
+                    .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                    .and_then(|entry| {
+                        convert_json_value_to_py_object(&serde_json::Value::from(entry))
+                    }),
+            )
+        }))
     }
 
     fn __str__(&self) -> String {
@@ -1476,11 +1520,12 @@ impl AsyncBatchOperationsIterator {
                 })
                 .transpose()
                 .map(|result| {
-                    result
-                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
-                        .and_then(|res| res)
-                })
-                .transpose()?;
+                    BatchOperationResult(
+                        result
+                            .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                            .and_then(|res| res),
+                    )
+                });
             if Pin::new(&mut *stream).peek_mut().await.is_none() {
                 inner.ended.store(true, Ordering::SeqCst);
             }
