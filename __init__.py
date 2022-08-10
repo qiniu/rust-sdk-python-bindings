@@ -1,1 +1,1 @@
-from .qiniu_sdk import *
+from .qiniu_sdk_alpha import *

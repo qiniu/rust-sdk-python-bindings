@@ -1,4 +1,4 @@
-.. automodule:: qiniu_sdk.apis.storage
+.. automodule:: qiniu_sdk_alpha.apis.storage
   :members:
   :show-inheritance:
   :noindex:

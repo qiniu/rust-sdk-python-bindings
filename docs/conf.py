@@ -17,11 +17,11 @@
 
 # -- Project information -----------------------------------------------------
 
-project = 'qiniu_sdk'
+project = 'qiniu_sdk_alpha'
 copyright = '2022 Qiniu, Ltd. <sdk@qiniu.com>'
 author = 'Bachue Zhou, Qiniu, Ltd.'
 version = '0.1'
-release = '0.0.1'
+release = '0.0.3'
 
 
 # -- General configuration ---------------------------------------------------

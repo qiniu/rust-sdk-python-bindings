@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from optparse import OptionParser
-import qiniu_sdk
-from qiniu_sdk import credential, objects
+import qiniu_sdk_alpha
+from qiniu_sdk_alpha import credential, objects
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     try:
         bucket.restore_archived_object(
             options.object_name, options.freeze_after_days).call()
-    except qiniu_sdk.QiniuApiCallError as e:
+    except qiniu_sdk_alpha.QiniuApiCallError as e:
         print('Code: %d, Message: %s, X-Reqid: %s' %
               (e.args[0].status_code, e.args[0].message, e.args[0].x_reqid))
 

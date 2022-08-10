@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 from optparse import OptionParser
-import qiniu_sdk
-from qiniu_sdk import objects, credential
+import qiniu_sdk_alpha
+from qiniu_sdk_alpha import objects, credential
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     bucket = objects_manager.bucket(options.bucket_name)
     try:
         bucket.delete_object(options.object_name).call()
-    except qiniu_sdk.QiniuApiCallError as e:
+    except qiniu_sdk_alpha.QiniuApiCallError as e:
         print('Code: %d, Message: %s, X-Reqid: %s' %
               (e.args[0].status_code, e.args[0].message, e.args[0].x_reqid))
 

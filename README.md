@@ -10,7 +10,7 @@ Qiniu SDK for Python 包含以下特性：
 
 - 通过提供多个不同的 Module，为不同层次的开发都提供了方便易用的编程接口。
 - 同时提供阻塞 IO 接口和基于 Async/Await 的异步 IO 接口。
-- 用 PyO3 封装 Rust 代码。
+- 用 PyO3 封装 Rust 代码，因此安装该插件需要您先安装最新版本的 Rust（安装方式请访问 [rustup.rs](https://rustup.rs/)）。
 
 ## 代码示例
 
@@ -23,7 +23,7 @@ Qiniu SDK for Python 包含以下特性：
 最简单的上传凭证只需要 `access key`，`secret key` 和 `bucket` 就可以。
 
 ```python
-from qiniu_sdk import upload_token, credential
+from qiniu_sdk_alpha import upload_token, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -39,7 +39,7 @@ print(upload_token)
 覆盖上传除了需要简单上传所需要的信息之外，还需要想进行覆盖的对象名称 `object name`，这个对象名称同时是客户端上传代码中指定的对象名称，两者必须一致。
 
 ```python
-from qiniu_sdk import upload_token, credential
+from qiniu_sdk_alpha import upload_token, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -61,7 +61,7 @@ print(upload_token)
 有时候我们希望能自定义这个返回的 JSON 格式的内容，可以通过设置 `returnBody` 参数来实现，在 `returnBody` 中，我们可以使用七牛支持的魔法变量和自定义变量。
 
 ```python
-from qiniu_sdk import upload_token, credential
+from qiniu_sdk_alpha import upload_token, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -86,7 +86,7 @@ print(upload_token)
 上面生成的自定义上传回复的上传凭证适用于上传端（无论是客户端还是服务端）和七牛服务器之间进行直接交互的情况下。在客户端上传的场景之下，有时候客户端需要在文件上传到七牛之后，从业务服务器获取相关的信息，这个时候就要用到七牛的上传回调及相关回调参数的设置。
 
 ```python
-from qiniu_sdk import upload_token, credential
+from qiniu_sdk_alpha import upload_token, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -103,7 +103,7 @@ print(upload_token)
 通常情况下，我们建议使用 `application/json` 格式来设置 `callback_body`，保持数据格式的统一性。实际情况下，`callback_body` 也支持 `application/x-www-form-urlencoded` 格式来组织内容，这个主要看业务服务器在接收到 `callback_body` 的内容时如何解析。例如：
 
 ```python
-from qiniu_sdk import upload_token, credential
+from qiniu_sdk_alpha import upload_token, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -125,7 +125,7 @@ print(upload_token)
 最简单的就是上传本地文件，直接指定文件的完整路径即可上传。
 
 ```python
-from qiniu_sdk import upload, credential
+from qiniu_sdk_alpha import upload, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -144,7 +144,7 @@ uploader.upload_path('/home/qiniu/test.png', object_name=object_name, file_name=
 可以支持将内存中的字节数组或实现了 `read` 方法的实例上传到空间中。
 
 ```python
-from qiniu_sdk import upload, credential
+from qiniu_sdk_alpha import upload, credential
 import io
 
 access_key = 'access key'
@@ -160,7 +160,7 @@ uploader.upload_reader(io.BytesIO(b'hello qiniu cloud'), object_name=object_name
 #### 自定义参数上传
 
 ```python
-from qiniu_sdk import upload, credential
+from qiniu_sdk_alpha import upload, credential
 
 def on_policy_generated(builder):
     builder.return_body = '{"key":"$(key)","hash":"$(etag)","fname":"$(x:fname)","age":$(x:age)}'
@@ -178,7 +178,7 @@ uploader.upload_path('/home/qiniu/test.png', object_name=object_name, file_name=
 #### 私有云上传
 
 ```python
-from qiniu_sdk import upload, credential, http_client
+from qiniu_sdk_alpha import upload, credential, http_client
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -197,7 +197,7 @@ uploader.upload_path('/home/qiniu/test.png', object_name=object_name, file_name=
 #### 公开空间
 
 ```python
-from qiniu_sdk import download
+from qiniu_sdk_alpha import download
 
 object_name = '公司/存储/qiniu.jpg'
 domain = 'devtools.qiniu.com'
@@ -209,7 +209,7 @@ download_manager.download_to_path(object_name, path)
 #### 私有空间
 
 ```python
-from qiniu_sdk import download, credential
+from qiniu_sdk_alpha import download, credential
 
 object_name = '公司/存储/qiniu.jpg'
 domain = 'devtools.qiniu.com'
@@ -226,7 +226,7 @@ download_manager.download_to_path(object_name, path)
 #### 获取文件信息
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -244,7 +244,7 @@ print(response['putTime'])
 #### 修改文件类型
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -260,7 +260,7 @@ bucket.modify_object_metadata(object_name, 'application/json').call()
 移动操作本身支持移动文件到相同，不同空间中，在移动的同时也可以支持文件重命名。唯一的限制条件是，移动的源空间和目标空间必须在同一个机房。
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -278,7 +278,7 @@ bucket.move_object_to(object_name, to_bucket_name, to_object_name).call()
 文件的复制和文件移动其实操作一样，主要的区别是移动后源文件不存在了，而复制的结果是源文件还存在，只是多了一个新的文件副本。
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -294,7 +294,7 @@ bucket.copy_object_to(object_name, to_bucket_name, to_object_name).call()
 #### 删除空间中的文件
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -309,7 +309,7 @@ bucket.delete_object(object_name).call()
 可以给已经存在于空间中的文件设置文件生存时间，或者更新已设置了生存时间但尚未被删除的文件的新的生存时间。
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -323,7 +323,7 @@ bucket.modify_object_life_cycle(object_name, delete_after_days=10).call()
 #### 获取空间文件列表
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -337,7 +337,7 @@ for obj in bucket.list():
 #### 私有云中获取空间文件列表
 
 ```python
-from qiniu_sdk import objects, credential, http_client
+from qiniu_sdk_alpha import objects, credential, http_client
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -353,7 +353,7 @@ for obj in bucket.list():
 #### 批量获取文件信息
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -374,7 +374,7 @@ for result in bucket.batch_ops([
 #### 批量修改文件类型
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -395,7 +395,7 @@ for result in bucket.batch_ops([
 #### 批量删除文件
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -416,7 +416,7 @@ for result in bucket.batch_ops([
 #### 批量移动或重命名文件
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -437,7 +437,7 @@ for result in bucket.batch_ops([
 #### 批量复制文件
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
@@ -458,7 +458,7 @@ for result in bucket.batch_ops([
 #### 批量解冻归档存储类型文件
 
 ```python
-from qiniu_sdk import objects, credential
+from qiniu_sdk_alpha import objects, credential
 
 access_key = 'access key'
 secret_key = 'secret key'
