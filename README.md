@@ -12,6 +12,13 @@ Qiniu SDK for Python 包含以下特性：
 - 同时提供阻塞 IO 接口和基于 Async/Await 的异步 IO 接口。
 - 用 PyO3 封装 Rust 代码，因此安装该插件需要您先安装最新版本的 Rust（安装方式请访问 [rustup.rs](https://rustup.rs/)）。
 
+## 安装步骤
+
+1. 确认 Rust 已经被安装，且版本号大于 `1.60.0`（可以用 `rustc --version` 查看）
+2. 确认 Python 已经被安装，且版本号大于 `3.8.0`（可以用 `python3 --version` 查看）
+3. 仅对于中国大陆用户，可以参考清华大学开源软件镜像站的 [Rust crates.io 索引镜像使用帮助](https://mirrors.tuna.tsinghua.edu.cn/help/crates.io-index.git/) 和 [PyPI 镜像使用帮助](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/) 加速相关依赖的下载速度
+4. 执行 `pip3 install qiniu-sdk-alpha`
+
 ## 代码示例
 
 ### 客户端上传凭证
