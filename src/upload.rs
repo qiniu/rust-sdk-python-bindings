@@ -13,6 +13,7 @@ use super::{
     utils::{convert_api_call_error, convert_json_value_to_py_object, parse_mime, PythonIoBase},
 };
 use anyhow::Result as AnyResult;
+use async_std::sync::RwLock as AsyncRwLock;
 use futures::{lock::Mutex as AsyncMutex, AsyncRead, AsyncReadExt, AsyncWriteExt};
 use maybe_owned::MaybeOwned;
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
@@ -1098,7 +1099,7 @@ macro_rules! impl_uploader {
         #[pymethods]
         impl $name {
             #[pyo3(
-                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1107,7 +1108,6 @@ macro_rules! impl_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn upload_path(
@@ -1119,7 +1119,6 @@ macro_rules! impl_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'_>,
             ) -> PyResult<PyObject> {
                 let object_params = make_object_params(
@@ -1129,7 +1128,6 @@ macro_rules! impl_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 py.allow_threads(|| {
                     self.0
@@ -1140,7 +1138,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1149,7 +1147,6 @@ macro_rules! impl_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn upload_reader(
@@ -1161,7 +1158,6 @@ macro_rules! impl_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'_>,
             ) -> PyResult<PyObject> {
                 let object_params = make_object_params(
@@ -1171,7 +1167,6 @@ macro_rules! impl_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 py.allow_threads(|| {
                     self.0
@@ -1182,7 +1177,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1191,7 +1186,6 @@ macro_rules! impl_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn async_upload_path<'p>(
@@ -1203,7 +1197,6 @@ macro_rules! impl_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let object_params = make_object_params(
@@ -1213,7 +1206,6 @@ macro_rules! impl_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 let uploader = self.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -1226,7 +1218,7 @@ macro_rules! impl_uploader {
             }
 
             #[pyo3(
-                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1235,7 +1227,6 @@ macro_rules! impl_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn async_upload_reader<'p>(
@@ -1247,7 +1238,6 @@ macro_rules! impl_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let object_params = make_object_params(
@@ -1257,7 +1247,6 @@ macro_rules! impl_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 let uploader = self.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
@@ -1337,6 +1326,10 @@ impl qiniu_sdk::upload::DataSource<Sha1> for DataSource {
         size: qiniu_sdk::upload::PartSize,
     ) -> std::io::Result<Option<qiniu_sdk::upload::DataSourceReader>> {
         self.0.slice(size)
+    }
+
+    fn reset(&self) -> std::io::Result<()> {
+        self.0.reset()
     }
 
     fn source_key(&self) -> std::io::Result<Option<qiniu_sdk::upload::SourceKey<Sha1>>> {
@@ -1462,6 +1455,10 @@ impl qiniu_sdk::upload::AsyncDataSource<Sha1> for AsyncDataSource {
     ) -> futures::future::BoxFuture<std::io::Result<Option<qiniu_sdk::upload::AsyncDataSourceReader>>>
     {
         self.0.slice(size)
+    }
+
+    fn reset(&self) -> futures::future::BoxFuture<std::io::Result<()>> {
+        self.0.reset()
     }
 
     fn source_key(
@@ -1862,7 +1859,7 @@ macro_rules! impl_multi_parts_uploader {
             ///
             /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
             #[pyo3(
-                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1871,7 +1868,6 @@ macro_rules! impl_multi_parts_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn initialize_parts(
@@ -1883,7 +1879,6 @@ macro_rules! impl_multi_parts_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'_>,
             ) -> PyResult<$initialized_parts> {
                 let object_params = make_object_params(
@@ -1893,12 +1888,31 @@ macro_rules! impl_multi_parts_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 py.allow_threads(|| {
                     self.0
                         .initialize_parts(source, object_params)
                         .map($initialized_parts)
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 重新初始化分片信息
+            ///
+            /// 该步骤负责将先前已经初始化过的分片信息全部重置，清空断点续传记录器中的记录，之后从头上传整个文件
+            #[pyo3(text_signature="($self, initialized, /, keep_original_region = None, refresh_regions = None, regions_provider = None)")]
+            #[args(keep_original_region = "None", refresh_regions = "None", regions_provider = "None")]
+            fn reinitialize_parts(&self,
+                initialized: &mut $initialized_parts,
+                keep_original_region: Option<bool>,
+                refresh_regions:Option<bool>,
+                regions_provider: Option<RegionsProvider>,
+                py: Python<'_>,
+            ) -> PyResult<()> {
+                let options = make_reinitialize_options(keep_original_region, refresh_regions, regions_provider);
+                py.allow_threads(|| {
+                    self.0
+                        .reinitialize_parts(&mut initialized.0, options)
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                 })
             }
@@ -1948,7 +1962,7 @@ macro_rules! impl_multi_parts_uploader {
             ///
             /// 该步骤只负责初始化分片，但不实际上传数据，如果提供了有效的断点续传记录器，则可以尝试在这一步找到记录。
             #[pyo3(
-                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+                text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
             )]
             #[args(
                 region_provider = "None",
@@ -1957,7 +1971,6 @@ macro_rules! impl_multi_parts_uploader {
                 content_type = "None",
                 metadata = "None",
                 custom_vars = "None",
-                uploaded_part_ttl_secs = "None"
             )]
             #[allow(clippy::too_many_arguments)]
             fn async_initialize_parts<'p>(
@@ -1969,7 +1982,6 @@ macro_rules! impl_multi_parts_uploader {
                 content_type: Option<&str>,
                 metadata: Option<HashMap<String, String>>,
                 custom_vars: Option<HashMap<String, String>>,
-                uploaded_part_ttl_secs: Option<u64>,
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let object_params = make_object_params(
@@ -1979,14 +1991,43 @@ macro_rules! impl_multi_parts_uploader {
                     content_type,
                     metadata,
                     custom_vars,
-                    uploaded_part_ttl_secs,
                 )?;
                 let uploader = self.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
                         .async_initialize_parts(source, object_params)
                         .await
-                        .map(|obj| $async_initialize_parts(Arc::new(obj)))
+                        .map(|initialized| $async_initialize_parts {
+                            object_name: initialized.params().object_name().map(|s| s.to_owned()),
+                            file_name: initialized.params().file_name().map(|s| s.to_owned()),
+                            content_type: initialized.params().content_type().cloned(),
+                            metadata: initialized.params().metadata().to_owned(),
+                            custom_vars: initialized.params().custom_vars().to_owned(),
+                            initialized: Arc::new(AsyncRwLock::new(initialized)),
+                        })
+                        .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
+                })
+            }
+
+            /// 异步重新初始化分片信息
+            ///
+            /// 该步骤负责将先前已经初始化过的分片信息全部重置，清空断点续传记录器中的记录，之后从头上传整个文件
+            #[pyo3(text_signature="($self, initialized, /, keep_original_region = None, refresh_regions = None, regions_provider = None)")]
+            #[args(keep_original_region = "None", refresh_regions = "None", regions_provider = "None")]
+            fn async_reinitialize_parts<'p>(&self,
+                initialized: $async_initialize_parts,
+                keep_original_region: Option<bool>,
+                refresh_regions:Option<bool>,
+                regions_provider: Option<RegionsProvider>,
+                py: Python<'p>,
+            ) -> PyResult<&'p PyAny> {
+                let options = make_reinitialize_options(keep_original_region, refresh_regions, regions_provider);
+                let uploader = self.0.to_owned();
+                let initialized = initialized.initialized.to_owned();
+                pyo3_asyncio::async_std::future_into_py(py, async move {
+                    uploader
+                        .async_reinitialize_parts(&mut *initialized.write().await, options)
+                        .await
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                 })
             }
@@ -2004,11 +2045,11 @@ macro_rules! impl_multi_parts_uploader {
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let uploader = self.0.to_owned();
-                let initialized = initialized.0.to_owned();
+                let initialized = initialized.initialized.to_owned();
                 let data_partitioner_provider = data_partitioner_provider.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
-                        .async_upload_part(&initialized, &data_partitioner_provider)
+                        .async_upload_part(&*initialized.read().await, &data_partitioner_provider)
                         .await
                         .map(|p| p.map($async_uploaded_part))
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
@@ -2026,11 +2067,11 @@ macro_rules! impl_multi_parts_uploader {
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let uploader = self.0.to_owned();
-                let initialized = initialized.0.to_owned();
+                let initialized = initialized.initialized.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
                         .async_complete_parts(
-                            &initialized,
+                            &*initialized.read().await,
                             &parts.into_iter().map(|part| part.0).collect::<Vec<_>>(),
                         )
                         .await
@@ -2118,14 +2159,53 @@ macro_rules! impl_initialized_object {
                 self.0.params().custom_vars().to_owned()
             }
 
-            /// 获取分片上传后的有效期
+            fn __repr__(&self) -> String {
+                format!("{:?}", self.0)
+            }
+
+            fn __str__(&self) -> String {
+                self.__repr__()
+            }
+        }
+    };
+}
+
+macro_rules! impl_async_initialized_object {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 获取对象名称
             #[getter]
-            fn get_uploaded_part_ttl_secs(&self) -> u64 {
-                self.0.params().uploaded_part_ttl().as_secs()
+            fn get_object_name(&mut self) -> Option<&str> {
+                self.object_name.as_deref()
+            }
+
+            /// 获取文件名称
+            #[getter]
+            fn get_file_name(&mut self) -> Option<&str> {
+                self.file_name.as_deref()
+            }
+
+            /// 获取 MIME 类型
+            #[getter]
+            fn get_content_type(&mut self) -> Option<&str> {
+                self.content_type.as_ref().map(|s| s.as_ref())
+            }
+
+            /// 获取对象元信息
+            #[getter]
+            fn get_metadata(&mut self) -> HashMap<String, String> {
+                self.metadata.to_owned()
+            }
+
+            /// 获取对象自定义变量
+            #[getter]
+            fn get_custom_vars(&mut self) -> HashMap<String, String> {
+                self.custom_vars.to_owned()
             }
 
             fn __repr__(&self) -> String {
-                format!("{:?}", self.0)
+                format!("{:?}", self.initialized)
             }
 
             fn __str__(&self) -> String {
@@ -2149,10 +2229,15 @@ impl_initialized_object!(MultiPartsV1UploaderInitializedObject);
 /// 通过 `multi_parts_uploader_v1.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
-struct AsyncMultiPartsV1UploaderInitializedObject(
-    Arc<<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>,
-);
-impl_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
+struct AsyncMultiPartsV1UploaderInitializedObject{
+    initialized: Arc<AsyncRwLock<<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>>,
+    object_name: Option<String>,
+    file_name: Option<String>,
+    content_type: Option<mime::Mime>,
+    metadata: HashMap<String, String>,
+    custom_vars: HashMap<String, String>,
+}
+impl_async_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
 
 /// 被 分片上传器 V2 初始化的分片信息
 ///
@@ -2168,10 +2253,15 @@ impl_initialized_object!(MultiPartsV2UploaderInitializedObject);
 /// 通过 `multi_parts_uploader_v2.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
-struct AsyncMultiPartsV2UploaderInitializedObject(
-    Arc<<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>,
-);
-impl_initialized_object!(AsyncMultiPartsV2UploaderInitializedObject);
+struct AsyncMultiPartsV2UploaderInitializedObject{
+    initialized: Arc<AsyncRwLock<<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>>,
+    object_name: Option<String>,
+    file_name: Option<String>,
+    content_type: Option<mime::Mime>,
+    metadata: HashMap<String, String>,
+    custom_vars: HashMap<String, String>,
+}
+impl_async_initialized_object!(AsyncMultiPartsV2UploaderInitializedObject);
 
 macro_rules! impl_uploaded_part {
     ($name:ident) => {
@@ -2270,7 +2360,7 @@ impl MultiPartsUploaderScheduler {
 
     /// 上传数据源
     #[pyo3(
-        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2278,8 +2368,7 @@ impl MultiPartsUploaderScheduler {
         file_name = "None",
         content_type = "None",
         metadata = "None",
-        custom_vars = "None",
-        uploaded_part_ttl_secs = "None"
+        custom_vars = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn upload(
@@ -2291,7 +2380,6 @@ impl MultiPartsUploaderScheduler {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<PyObject> {
         let object_params = make_object_params(
@@ -2301,7 +2389,6 @@ impl MultiPartsUploaderScheduler {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
         )?;
         py.allow_threads(|| {
             self.0
@@ -2313,7 +2400,7 @@ impl MultiPartsUploaderScheduler {
 
     /// 异步上传数据源
     #[pyo3(
-        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None)"
+        text_signature = "($self, source, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2321,8 +2408,7 @@ impl MultiPartsUploaderScheduler {
         file_name = "None",
         content_type = "None",
         metadata = "None",
-        custom_vars = "None",
-        uploaded_part_ttl_secs = "None"
+        custom_vars = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn async_upload<'p>(
@@ -2334,7 +2420,6 @@ impl MultiPartsUploaderScheduler {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         py: Python<'p>,
     ) -> PyResult<&'p PyAny> {
         let scheduler = self.0.to_owned();
@@ -2345,7 +2430,6 @@ impl MultiPartsUploaderScheduler {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
         )?;
         pyo3_asyncio::async_std::future_into_py(py, async move {
             scheduler
@@ -2421,7 +2505,6 @@ fn make_object_params(
     content_type: Option<&str>,
     metadata: Option<HashMap<String, String>>,
     custom_vars: Option<HashMap<String, String>>,
-    uploaded_part_ttl_secs: Option<u64>,
 ) -> PyResult<qiniu_sdk::upload::ObjectParams> {
     let mut builder = qiniu_sdk::upload::ObjectParams::builder();
     if let Some(region_provider) = region_provider {
@@ -2442,10 +2525,25 @@ fn make_object_params(
     if let Some(custom_vars) = custom_vars {
         builder.custom_vars(custom_vars);
     }
-    if let Some(uploaded_part_ttl_secs) = uploaded_part_ttl_secs {
-        builder.uploaded_part_ttl(Duration::from_secs(uploaded_part_ttl_secs));
-    }
     Ok(builder.build())
+}
+
+fn make_reinitialize_options(
+    keep_original_region: Option<bool>,
+    refresh_regions: Option<bool>,
+    region_provider: Option<RegionsProvider>,
+) -> qiniu_sdk::upload::ReinitializeOptions {
+    let mut builder = qiniu_sdk::upload::ReinitializeOptions::builder();
+    if let Some(region_provider) = region_provider {
+        builder.regions_provider(region_provider);
+    }
+    if let Some(true) = refresh_regions {
+        builder.refresh_regions();
+    }
+    if let Some(true) = keep_original_region {
+        builder.keep_original_region();
+    }
+    builder.build()
 }
 
 fn on_before_request(
@@ -2704,7 +2802,7 @@ struct AutoUploader(qiniu_sdk::upload::AutoUploader);
 #[pymethods]
 impl AutoUploader {
     #[pyo3(
-        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2713,7 +2811,6 @@ impl AutoUploader {
         content_type = "None",
         metadata = "None",
         custom_vars = "None",
-        uploaded_part_ttl_secs = "None",
         multi_parts_uploader_scheduler_prefer = "None",
         single_part_uploader_prefer = "None",
         multi_parts_uploader_prefer = "None"
@@ -2728,7 +2825,6 @@ impl AutoUploader {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
         single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
         multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
@@ -2741,7 +2837,6 @@ impl AutoUploader {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
             multi_parts_uploader_scheduler_prefer,
             single_part_uploader_prefer,
             multi_parts_uploader_prefer,
@@ -2755,7 +2850,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2764,7 +2859,6 @@ impl AutoUploader {
         content_type = "None",
         metadata = "None",
         custom_vars = "None",
-        uploaded_part_ttl_secs = "None",
         multi_parts_uploader_scheduler_prefer = "None",
         single_part_uploader_prefer = "None",
         multi_parts_uploader_prefer = "None"
@@ -2779,7 +2873,6 @@ impl AutoUploader {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
         single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
         multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
@@ -2792,7 +2885,6 @@ impl AutoUploader {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
             multi_parts_uploader_scheduler_prefer,
             single_part_uploader_prefer,
             multi_parts_uploader_prefer,
@@ -2806,7 +2898,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, path, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2815,7 +2907,6 @@ impl AutoUploader {
         content_type = "None",
         metadata = "None",
         custom_vars = "None",
-        uploaded_part_ttl_secs = "None",
         multi_parts_uploader_scheduler_prefer = "None",
         single_part_uploader_prefer = "None",
         multi_parts_uploader_prefer = "None"
@@ -2830,7 +2921,6 @@ impl AutoUploader {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
         single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
         multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
@@ -2843,7 +2933,6 @@ impl AutoUploader {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
             multi_parts_uploader_scheduler_prefer,
             single_part_uploader_prefer,
             multi_parts_uploader_prefer,
@@ -2859,7 +2948,7 @@ impl AutoUploader {
     }
 
     #[pyo3(
-        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, uploaded_part_ttl_secs=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
+        text_signature = "($self, reader, /, region_provider=None, object_name=None, file_name=None, content_type=None, metadata=None, custom_vars=None, multi_parts_uploader_scheduler_prefer=None, single_part_uploader_prefer=None, multi_parts_uploader_prefer=None)"
     )]
     #[args(
         region_provider = "None",
@@ -2868,7 +2957,6 @@ impl AutoUploader {
         content_type = "None",
         metadata = "None",
         custom_vars = "None",
-        uploaded_part_ttl_secs = "None",
         multi_parts_uploader_scheduler_prefer = "None",
         single_part_uploader_prefer = "None",
         multi_parts_uploader_prefer = "None"
@@ -2883,7 +2971,6 @@ impl AutoUploader {
         content_type: Option<&str>,
         metadata: Option<HashMap<String, String>>,
         custom_vars: Option<HashMap<String, String>>,
-        uploaded_part_ttl_secs: Option<u64>,
         multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
         single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
         multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
@@ -2896,7 +2983,6 @@ impl AutoUploader {
             content_type,
             metadata,
             custom_vars,
-            uploaded_part_ttl_secs,
             multi_parts_uploader_scheduler_prefer,
             single_part_uploader_prefer,
             multi_parts_uploader_prefer,
@@ -2928,7 +3014,6 @@ fn make_auto_uploader_object_params(
     content_type: Option<&str>,
     metadata: Option<HashMap<String, String>>,
     custom_vars: Option<HashMap<String, String>>,
-    uploaded_part_ttl_secs: Option<u64>,
     multi_parts_uploader_scheduler_prefer: Option<MultiPartsUploaderSchedulerPrefer>,
     single_part_uploader_prefer: Option<SinglePartUploaderPrefer>,
     multi_parts_uploader_prefer: Option<MultiPartsUploaderPrefer>,
@@ -2951,9 +3036,6 @@ fn make_auto_uploader_object_params(
     }
     if let Some(custom_vars) = custom_vars {
         builder.custom_vars(custom_vars);
-    }
-    if let Some(uploaded_part_ttl_secs) = uploaded_part_ttl_secs {
-        builder.uploaded_part_ttl(Duration::from_secs(uploaded_part_ttl_secs));
     }
     if let Some(multi_parts_uploader_scheduler_prefer) = multi_parts_uploader_scheduler_prefer {
         builder.multi_parts_uploader_scheduler_prefer(multi_parts_uploader_scheduler_prefer.into());
