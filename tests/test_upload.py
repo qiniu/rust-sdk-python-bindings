@@ -6,6 +6,7 @@ import os
 import secrets
 import hashlib
 import aiofiles
+import time
 import base64
 import threading
 
@@ -157,7 +158,7 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
             case.assertEqual(len(data), 1 << 22)
             nonlocal blocks
             blocks += 1
-            return web.json_response({'ctx': '===ctx-%d===' % blocks}, headers={'X-ReqId': 'fakereqid'})
+            return web.json_response({'ctx': '===ctx-%d===' % blocks, 'expired_at': int(time.time()) + 3600}, headers={'X-ReqId': 'fakereqid'})
 
         async def mkfile(request):
             case.assertEqual(int(request.match_info['file_size']), 1 << 24)
@@ -215,7 +216,7 @@ class TestMultiPartsUploader(unittest.IsolatedAsyncioTestCase):
                 request.match_info['bucket_name'], 'fakebucket')
             case.assertEqual(
                 base64.urlsafe_b64decode(request.match_info['encoded_key']), b'fakeobjectname')
-            return web.json_response({'uploadId': 'fakeUploadId'}, headers={'X-ReqId': 'fakereqid'})
+            return web.json_response({'uploadId': 'fakeUploadId', 'expireAt': int(time.time()) + 3600}, headers={'X-ReqId': 'fakereqid'})
 
         async def upload_part(request):
             case.assertEqual(

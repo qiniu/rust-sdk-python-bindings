@@ -2517,7 +2517,7 @@ fn on_error(
     callback: PyObject,
 ) -> impl Fn(
     &mut dyn qiniu_sdk::http_client::ExtendedCallbackContext,
-    &qiniu_sdk::http_client::ResponseError,
+    &mut qiniu_sdk::http_client::ResponseError,
 ) -> AnyResult<()>
        + Send
        + Sync

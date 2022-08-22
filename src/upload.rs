@@ -13,7 +13,6 @@ use super::{
     utils::{convert_api_call_error, convert_json_value_to_py_object, parse_mime, PythonIoBase},
 };
 use anyhow::Result as AnyResult;
-use async_std::sync::RwLock as AsyncRwLock;
 use futures::{lock::Mutex as AsyncMutex, AsyncRead, AsyncReadExt, AsyncWriteExt};
 use maybe_owned::MaybeOwned;
 use pyo3::{exceptions::PyIOError, prelude::*, types::PyBytes};
@@ -1997,14 +1996,7 @@ macro_rules! impl_multi_parts_uploader {
                     uploader
                         .async_initialize_parts(source, object_params)
                         .await
-                        .map(|initialized| $async_initialize_parts {
-                            object_name: initialized.params().object_name().map(|s| s.to_owned()),
-                            file_name: initialized.params().file_name().map(|s| s.to_owned()),
-                            content_type: initialized.params().content_type().cloned(),
-                            metadata: initialized.params().metadata().to_owned(),
-                            custom_vars: initialized.params().custom_vars().to_owned(),
-                            initialized: Arc::new(AsyncRwLock::new(initialized)),
-                        })
+                        .map($async_initialize_parts)
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                 })
             }
@@ -2023,10 +2015,10 @@ macro_rules! impl_multi_parts_uploader {
             ) -> PyResult<&'p PyAny> {
                 let options = make_reinitialize_options(keep_original_region, refresh_regions, regions_provider);
                 let uploader = self.0.to_owned();
-                let initialized = initialized.initialized.to_owned();
+                let mut initialized = initialized.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
-                        .async_reinitialize_parts(&mut *initialized.write().await, options)
+                        .async_reinitialize_parts(&mut initialized, options)
                         .await
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
                 })
@@ -2039,17 +2031,15 @@ macro_rules! impl_multi_parts_uploader {
             /// 如果返回 `None` 则表示已经没有更多分片可以上传。
             #[pyo3(text_signature = "($self, initialized, data_partitioner_provider)")]
             fn async_upload_part<'p>(
-                &self,
-                initialized: &$async_initialize_parts,
-                data_partitioner_provider: &DataPartitionProvider,
+                &'p self,
+                initialized: $async_initialize_parts,
+                data_partitioner_provider: DataPartitionProvider,
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let uploader = self.0.to_owned();
-                let initialized = initialized.initialized.to_owned();
-                let data_partitioner_provider = data_partitioner_provider.0.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
-                        .async_upload_part(&*initialized.read().await, &data_partitioner_provider)
+                        .async_upload_part(&initialized.0, &data_partitioner_provider)
                         .await
                         .map(|p| p.map($async_uploaded_part))
                         .map_err(|err| QiniuApiCallError::from_err(MaybeOwned::Owned(err)))
@@ -2062,16 +2052,15 @@ macro_rules! impl_multi_parts_uploader {
             #[pyo3(text_signature = "($self, initialized, parts)")]
             fn async_complete_part<'p>(
                 &'p self,
-                initialized: &'p $async_initialize_parts,
+                initialized: $async_initialize_parts,
                 parts: Vec<$async_uploaded_part>,
                 py: Python<'p>,
             ) -> PyResult<&'p PyAny> {
                 let uploader = self.0.to_owned();
-                let initialized = initialized.initialized.to_owned();
                 pyo3_asyncio::async_std::future_into_py(py, async move {
                     uploader
                         .async_complete_parts(
-                            &*initialized.read().await,
+                            &initialized.0,
                             &parts.into_iter().map(|part| part.0).collect::<Vec<_>>(),
                         )
                         .await
@@ -2170,51 +2159,6 @@ macro_rules! impl_initialized_object {
     };
 }
 
-macro_rules! impl_async_initialized_object {
-    ($name:ident) => {
-        #[pymethods]
-        impl $name {
-            /// 获取对象名称
-            #[getter]
-            fn get_object_name(&mut self) -> Option<&str> {
-                self.object_name.as_deref()
-            }
-
-            /// 获取文件名称
-            #[getter]
-            fn get_file_name(&mut self) -> Option<&str> {
-                self.file_name.as_deref()
-            }
-
-            /// 获取 MIME 类型
-            #[getter]
-            fn get_content_type(&mut self) -> Option<&str> {
-                self.content_type.as_ref().map(|s| s.as_ref())
-            }
-
-            /// 获取对象元信息
-            #[getter]
-            fn get_metadata(&mut self) -> HashMap<String, String> {
-                self.metadata.to_owned()
-            }
-
-            /// 获取对象自定义变量
-            #[getter]
-            fn get_custom_vars(&mut self) -> HashMap<String, String> {
-                self.custom_vars.to_owned()
-            }
-
-            fn __repr__(&self) -> String {
-                format!("{:?}", self.initialized)
-            }
-
-            fn __str__(&self) -> String {
-                self.__repr__()
-            }
-        }
-    };
-}
-
 /// 被 分片上传器 V1 初始化的分片信息
 ///
 /// 通过 `multi_parts_uploader_v1.initialize_parts()` 创建
@@ -2229,15 +2173,10 @@ impl_initialized_object!(MultiPartsV1UploaderInitializedObject);
 /// 通过 `multi_parts_uploader_v1.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
-struct AsyncMultiPartsV1UploaderInitializedObject{
-    initialized: Arc<AsyncRwLock<<qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>>,
-    object_name: Option<String>,
-    file_name: Option<String>,
-    content_type: Option<mime::Mime>,
-    metadata: HashMap<String, String>,
-    custom_vars: HashMap<String, String>,
-}
-impl_async_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
+struct AsyncMultiPartsV1UploaderInitializedObject(
+    <qiniu_sdk::upload::MultiPartsV1Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts,
+);
+impl_initialized_object!(AsyncMultiPartsV1UploaderInitializedObject);
 
 /// 被 分片上传器 V2 初始化的分片信息
 ///
@@ -2253,15 +2192,10 @@ impl_initialized_object!(MultiPartsV2UploaderInitializedObject);
 /// 通过 `multi_parts_uploader_v2.async_initialize_parts()` 创建
 #[pyclass]
 #[derive(Clone)]
-struct AsyncMultiPartsV2UploaderInitializedObject{
-    initialized: Arc<AsyncRwLock<<qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts>>,
-    object_name: Option<String>,
-    file_name: Option<String>,
-    content_type: Option<mime::Mime>,
-    metadata: HashMap<String, String>,
-    custom_vars: HashMap<String, String>,
-}
-impl_async_initialized_object!(AsyncMultiPartsV2UploaderInitializedObject);
+struct AsyncMultiPartsV2UploaderInitializedObject(
+    <qiniu_sdk::upload::MultiPartsV2Uploader as qiniu_sdk::upload::MultiPartsUploader>::AsyncInitializedParts,
+);
+impl_initialized_object!(AsyncMultiPartsV2UploaderInitializedObject);
 
 macro_rules! impl_uploaded_part {
     ($name:ident) => {
@@ -2672,7 +2606,7 @@ fn on_response(
 
 fn on_error(
     callback: PyObject,
-) -> impl Fn(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+) -> impl Fn(&mut qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
     move |error| {
         #[allow(unsafe_code)]
         let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };

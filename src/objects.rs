@@ -1104,7 +1104,8 @@ fn make_after_response_ok_callback(
 
 fn make_after_response_error_callback(
     callback: PyObject,
-) -> impl FnMut(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+) -> impl FnMut(&mut qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static
+{
     move |error| {
         let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
         let error = QiniuApiCallError::from_err(MaybeOwned::Borrowed(error));

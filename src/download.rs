@@ -906,7 +906,7 @@ fn on_response(
 
 fn on_error(
     callback: PyObject,
-) -> impl Fn(&qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
+) -> impl Fn(&mut qiniu_sdk::http_client::ResponseError) -> AnyResult<()> + Send + Sync + 'static {
     move |error| {
         #[allow(unsafe_code)]
         let error: &'static qiniu_sdk::http_client::ResponseError = unsafe { transmute(error) };
