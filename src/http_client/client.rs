@@ -2225,6 +2225,51 @@ macro_rules! impl_callback_context {
     };
 }
 
+macro_rules! impl_callback_context_ext {
+    ($name:ident) => {
+        #[pymethods]
+        impl $name {
+            /// 获取请求超时时长
+            #[getter]
+            fn get_timeout_ms(&self) -> Option<u128> {
+                self.0
+                    .extensions()
+                    .get::<qiniu_sdk::isahc::TimeoutRequestExtension>()
+                    .map(|ext| ext.get().as_millis())
+            }
+
+            /// 设置请求超时时长
+            #[setter]
+            fn set_timeout_ms(&mut self, timeout_ms: u64) {
+                self.0
+                    .extensions_mut()
+                    .insert(qiniu_sdk::isahc::TimeoutRequestExtension::new(
+                        Duration::from_millis(timeout_ms),
+                    ));
+            }
+
+            /// 获取连接请求超时时长
+            #[getter]
+            fn get_connect_timeout_ms(&self) -> Option<u128> {
+                self.0
+                    .extensions()
+                    .get::<qiniu_sdk::isahc::ConnectTimeoutRequestExtension>()
+                    .map(|ext| ext.get().as_millis())
+            }
+
+            /// 设置连接请求超时时长
+            #[setter]
+            fn set_connect_timeout_ms(&mut self, timeout_ms: u64) {
+                self.0.extensions_mut().insert(
+                    qiniu_sdk::isahc::ConnectTimeoutRequestExtension::new(Duration::from_millis(
+                        timeout_ms,
+                    )),
+                );
+            }
+        }
+    };
+}
+
 /// 简化回调函数上下文
 ///
 /// 用于在回调函数中获取请求相关信息，如请求路径、请求方法、查询参数、请求头等。
@@ -2332,6 +2377,7 @@ impl CallbackContextMut {
 }
 
 impl_callback_context!(CallbackContextMut);
+impl_callback_context_ext!(CallbackContextMut);
 
 impl<'a> AsMut<dyn qiniu_sdk::http_client::CallbackContext + 'a> for CallbackContextMut {
     fn as_mut(&mut self) -> &mut (dyn qiniu_sdk::http_client::CallbackContext + 'a) {
@@ -2426,6 +2472,7 @@ impl ExtendedCallbackContextRef {
 }
 
 impl_callback_context!(ExtendedCallbackContextRef);
+impl_callback_context_ext!(ExtendedCallbackContextRef);
 
 #[pymethods]
 impl ExtendedCallbackContextRef {
@@ -2640,7 +2687,7 @@ impl RequestBuilderPartsRef {
     }
 
     /// 追加 UserAgent
-    #[pyo3(text_signature = "($self, user_agent)")]
+    #[setter]
     fn set_appended_user_agent(&mut self, user_agent: String) {
         self.0.appended_user_agent(user_agent);
     }
@@ -2655,6 +2702,24 @@ impl RequestBuilderPartsRef {
     #[setter]
     fn set_idempotent(&mut self, idempotent: Idempotent) {
         self.0.idempotent(idempotent.into());
+    }
+
+    /// 设置请求超时时长
+    #[setter]
+    fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.0
+            .add_extension(qiniu_sdk::isahc::TimeoutRequestExtension::new(
+                Duration::from_millis(timeout_ms),
+            ));
+    }
+
+    /// 设置连接请求超时时长
+    #[setter]
+    fn set_connect_timeout_ms(&mut self, timeout_ms: u64) {
+        self.0
+            .add_extension(qiniu_sdk::isahc::ConnectTimeoutRequestExtension::new(
+                Duration::from_millis(timeout_ms),
+            ));
     }
 
     /// 设置上传进度回调函数

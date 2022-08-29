@@ -212,10 +212,10 @@ impl ToPyObject for TransferProgressInfo {
 ///
 /// 不包含请求体信息
 ///
-/// 通过 `HttpRequestParts(url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建 HTTP 请求信息
+/// 通过 `HttpRequestParts(url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)` 创建 HTTP 请求信息
 #[pyclass(subclass)]
 #[pyo3(
-    text_signature = "(/, url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
+    text_signature = "(/, url = None, method = None, headers = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)"
 )]
 #[derive(Default)]
 pub(super) struct HttpRequestParts(qiniu_sdk::http::RequestParts<'static>);
@@ -232,7 +232,9 @@ impl HttpRequestParts {
         resolved_ip_addrs = "None",
         uploading_progress = "None",
         receive_response_status = "None",
-        receive_response_header = "None"
+        receive_response_header = "None",
+        timeout_ms = "None",
+        connect_timeout_ms = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -245,6 +247,8 @@ impl HttpRequestParts {
         uploading_progress: Option<PyObject>,
         receive_response_status: Option<PyObject>,
         receive_response_header: Option<PyObject>,
+        timeout_ms: Option<u64>,
+        connect_timeout_ms: Option<u64>,
     ) -> PyResult<Self> {
         let mut builder = qiniu_sdk::http::RequestParts::builder();
         if let Some(url) = url {
@@ -273,6 +277,16 @@ impl HttpRequestParts {
         }
         if let Some(callback) = receive_response_header {
             builder.on_receive_response_header(on_receive_response_header(callback));
+        }
+        if let Some(timeout_ms) = timeout_ms {
+            builder.add_extension(qiniu_sdk::isahc::TimeoutRequestExtension::new(
+                Duration::from_millis(timeout_ms),
+            ));
+        }
+        if let Some(connect_timeout_ms) = connect_timeout_ms {
+            builder.add_extension(qiniu_sdk::isahc::ConnectTimeoutRequestExtension::new(
+                Duration::from_millis(connect_timeout_ms),
+            ));
         }
         Ok(Self(builder.build()))
     }
@@ -364,6 +378,44 @@ impl HttpRequestParts {
         Ok(())
     }
 
+    /// 获取请求超时时长
+    #[getter]
+    fn get_timeout_ms(&self) -> Option<u128> {
+        self.0
+            .extensions()
+            .get::<qiniu_sdk::isahc::TimeoutRequestExtension>()
+            .map(|ext| ext.get().as_millis())
+    }
+
+    /// 设置请求超时时长
+    #[setter]
+    fn set_timeout_ms(&mut self, timeout_ms: u64) {
+        self.0
+            .extensions_mut()
+            .insert(qiniu_sdk::isahc::TimeoutRequestExtension::new(
+                Duration::from_millis(timeout_ms),
+            ));
+    }
+
+    /// 获取连接请求超时时长
+    #[getter]
+    fn get_connect_timeout_ms(&self) -> Option<u128> {
+        self.0
+            .extensions()
+            .get::<qiniu_sdk::isahc::ConnectTimeoutRequestExtension>()
+            .map(|ext| ext.get().as_millis())
+    }
+
+    /// 设置连接请求超时时长
+    #[setter]
+    fn set_connect_timeout_ms(&mut self, timeout_ms: u64) {
+        self.0
+            .extensions_mut()
+            .insert(qiniu_sdk::isahc::ConnectTimeoutRequestExtension::new(
+                Duration::from_millis(timeout_ms),
+            ));
+    }
+
     /// 设置上传进度回调
     #[setter]
     fn set_uploading_progress(&mut self, callback: PyObject) -> PyResult<()> {
@@ -412,10 +464,10 @@ impl DerefMut for HttpRequestParts {
 ///
 /// 封装 HTTP 请求相关字段
 ///
-/// 通过 `SyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建阻塞 HTTP 请求
+/// 通过 `SyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)` 创建阻塞 HTTP 请求
 #[pyclass(extends = HttpRequestParts)]
 #[pyo3(
-    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
+    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)"
 )]
 pub(super) struct SyncHttpRequest(qiniu_sdk::http::SyncRequestBody<'static>);
 
@@ -433,7 +485,9 @@ impl SyncHttpRequest {
         body_len = "None",
         uploading_progress = "None",
         receive_response_status = "None",
-        receive_response_header = "None"
+        receive_response_header = "None",
+        timeout_ms = "None",
+        connect_timeout_ms = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -448,6 +502,8 @@ impl SyncHttpRequest {
         uploading_progress: Option<PyObject>,
         receive_response_status: Option<PyObject>,
         receive_response_header: Option<PyObject>,
+        timeout_ms: Option<u64>,
+        connect_timeout_ms: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<(Self, HttpRequestParts)> {
         let parts = HttpRequestParts::new(
@@ -460,6 +516,8 @@ impl SyncHttpRequest {
             uploading_progress,
             receive_response_status,
             receive_response_header,
+            timeout_ms,
+            connect_timeout_ms,
         )?;
         let body = body
             .map(|body| extract_sync_request_body(body, body_len, py))
@@ -498,10 +556,10 @@ impl SyncHttpRequest {
 ///
 /// 封装 HTTP 请求相关字段
 ///
-/// 通过 `AsyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)` 创建异步 HTTP 请求
+/// 通过 `AsyncHttpRequest(url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)` 创建异步 HTTP 请求
 #[pyclass(extends = HttpRequestParts)]
 #[pyo3(
-    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None)"
+    text_signature = "(/, url = None, method = None, headers = None, body = None, body_len = None, appended_user_agent = None, resolved_ip_addrs = None, uploading_progress = None, receive_response_status = None, receive_response_header = None, timeout_ms = None, connect_timeout_ms = None)"
 )]
 pub(super) struct AsyncHttpRequest {
     body: qiniu_sdk::http::AsyncRequestBody<'static>,
@@ -522,7 +580,9 @@ impl AsyncHttpRequest {
         body_len = "None",
         uploading_progress = "None",
         receive_response_status = "None",
-        receive_response_header = "None"
+        receive_response_header = "None",
+        timeout_ms = "None",
+        connect_timeout_ms = "None"
     )]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -537,6 +597,8 @@ impl AsyncHttpRequest {
         uploading_progress: Option<PyObject>,
         receive_response_status: Option<PyObject>,
         receive_response_header: Option<PyObject>,
+        timeout_ms: Option<u64>,
+        connect_timeout_ms: Option<u64>,
         py: Python<'_>,
     ) -> PyResult<(Self, HttpRequestParts)> {
         let parts = HttpRequestParts::new(
@@ -549,6 +611,8 @@ impl AsyncHttpRequest {
             uploading_progress,
             receive_response_status,
             receive_response_header,
+            timeout_ms,
+            connect_timeout_ms,
         )?;
         let (body, agent) = body
             .map(|body| extract_async_request_body(body, body_len, py))
