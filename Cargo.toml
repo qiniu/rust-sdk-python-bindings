@@ -1,6 +1,6 @@
 [package]
-name = "qiniu-sdk-alpha"
-version = "0.0.3"
+name = "qiniu-sdk"
+version = "0.1.0"
 authors = ["Rong Zhou <zhourong@qiniu.com>", "Shanghai Qiniu Information Technologies Co., Ltd."]
 edition = "2021"
 rust-version = "1.60.0"
@@ -13,7 +13,7 @@ keywords = ["qiniu", "storage", "python"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "qiniu_sdk_alpha"
+name = "qiniu_sdk"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -28,7 +28,7 @@ smart-default = "0.6.0"
 serde_json = "1.0.79"
 pyo3 = { version = "0.16.6", features = ["abi3-py38", "extension-module", "multiple-pymethods"] }
 pyo3-asyncio = { version = "0.16.0", features = ["async-std-runtime"] }
-qiniu-sdk = { version = "0.2.0", path = "rust-sdk/sdk", default-features = false, features = ["utils", "etag", "credential", "upload-token", "http", "http-client", "objects", "upload", "download", "isahc", "trust_dns", "async"] }
+qiniu-sdk = { version = "0.2.0", default-features = false, features = ["utils", "etag", "credential", "upload-token", "http", "http-client", "objects", "upload", "download", "isahc", "trust_dns", "async"] }
 async-std = "1.6.3"
 anyhow = "1.0.57"
 futures = "0.3.21"
@@ -42,3 +42,7 @@ proc-macro2 = "1.0.39"
 serde_yaml = "0.8.24"
 indexmap = "1.8.1"
 convert_case = "0.5.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

@@ -3,11 +3,11 @@
 all: build
 build:
 ifeq ($(OS),Windows_NT)
-	powershell "(.\.env\Scripts\Activate.ps1); (.\.env\Scripts\python.exe -m pip uninstall -y qiniu-sdk-alpha); (maturin.exe develop)"
+	powershell "(.\.env\Scripts\Activate.ps1); (.\.env\Scripts\python.exe -m pip uninstall -y qiniu-sdk); (maturin.exe develop)"
 else
 	set -e; \
 	. .env/bin/activate; \
-	.env/bin/python -m pip uninstall -y qiniu-sdk-alpha || true; \
+	.env/bin/python -m pip uninstall -y qiniu-sdk || true; \
 	maturin develop
 endif
 apis:
@@ -47,7 +47,6 @@ clippy:
 docs: build
 	$(MAKE) -C docs html
 clean:
-	make -C rust-sdk clean
 	cargo clean
 ifeq ($(OS),Windows_NT)
 	powershell "(Get-ChildItem .env -Recurse | Remove-Item -Force -Recurse)"

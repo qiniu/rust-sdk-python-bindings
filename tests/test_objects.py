@@ -1,4 +1,4 @@
-from qiniu_sdk_alpha import objects, credential, http_client
+from qiniu_sdk import objects, credential, http_client
 from aiohttp import web
 import unittest
 import base64

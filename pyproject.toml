@@ -3,8 +3,8 @@ requires = ["maturin>=0.13,<0.14"]
 build-backend = "maturin"
 
 [project]
-name = "qiniu-sdk-alpha"
-version = '0.0.3'
+name = "qiniu-sdk"
+version = '0.1.0'
 description = "Qiniu Rust SDK Bindings to Python"
 authors = [
     { name = "Rong Zhou", email = "zhourong@qiniu.com" }

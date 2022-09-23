@@ -1,5 +1,5 @@
 from threading import Thread
-from qiniu_sdk_alpha import http
+from qiniu_sdk import http
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from aiohttp import web
 import unittest
