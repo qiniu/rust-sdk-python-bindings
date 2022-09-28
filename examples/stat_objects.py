@@ -3,7 +3,7 @@
 
 from optparse import OptionParser
 import sys
-from qiniu_sdk import objects, credential
+from qiniu_bindings import objects, credential
 
 
 def main():

@@ -1,4 +1,4 @@
-from qiniu_sdk import credential, upload_token
+from qiniu_bindings import credential, upload_token
 import unittest
 import aiofiles
 import asyncio

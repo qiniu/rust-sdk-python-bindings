@@ -5,41 +5,41 @@
 * :ref:`modindex`
 * :ref:`search`
 
-.. automodule:: qiniu_sdk.etag
+.. automodule:: qiniu_bindings.etag
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.credential
+.. automodule:: qiniu_bindings.credential
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.upload_token
+.. automodule:: qiniu_bindings.upload_token
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.http
+.. automodule:: qiniu_bindings.http
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.http_client
+.. automodule:: qiniu_bindings.http_client
    :members:
    :show-inheritance:
 
 .. include:: ../src/apis/index.rst
 
-.. automodule:: qiniu_sdk.objects
+.. automodule:: qiniu_bindings.objects
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.upload
+.. automodule:: qiniu_bindings.upload
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk.download
+.. automodule:: qiniu_bindings.download
    :members:
    :show-inheritance:
 
-.. automodule:: qiniu_sdk
+.. automodule:: qiniu_bindings
    :members:
    :show-inheritance:
 

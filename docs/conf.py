@@ -17,7 +17,7 @@
 
 # -- Project information -----------------------------------------------------
 
-project = 'qiniu_sdk'
+project = 'qiniu_bindings'
 copyright = '2022 Qiniu, Ltd. <sdk@qiniu.com>'
 author = 'Bachue Zhou, Qiniu, Ltd.'
 version = '0.1'

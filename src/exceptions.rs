@@ -139,91 +139,91 @@ macro_rules! create_exception_with_info {
 }
 
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuUserAgentInitializeError,
     PyRuntimeError,
     "七牛用户代理初始化异常"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidPortError,
     PyValueError,
     "七牛非法端口号错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuBodySizeMissingError,
     PyTypeError,
     "七牛缺少 body_len 参数错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuEmptyChainCredentialsProvider,
     PyValueError,
     "七牛空 ChainCredentialsProvider 错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuEmptyRegionsProvider,
     PyValueError,
     "七牛空 StaticRegionsProvider 错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuEmptyEndpoints,
     PyValueError,
     "七牛空 Endpoints 错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuEmptyChainedResolver,
     PyValueError,
     "七牛空 ChainedResolver 错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuUnsupportedTypeError,
     PyValueError,
     "七牛不支持的类型错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidConcurrency,
     PyValueError,
     "七牛并行数错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidObjectSize,
     PyValueError,
     "七牛对象大小错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidPartSize,
     PyValueError,
     "七牛分片大小错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidMultiply,
     PyValueError,
     "七牛分片大小错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidLimitation,
     PyValueError,
     "七牛分片限制错误"
 );
 create_exception!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidSourceKeyLengthError,
     PyValueError,
     "七牛数据源 KEY 长度错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuCallbackError,
     "QiniuCallbackError",
     PyRuntimeError,
@@ -232,7 +232,7 @@ create_exception_with_info!(
     "七牛回调异常"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuIsahcError,
     "QiniuIsahcError",
     PyRuntimeError,
@@ -241,7 +241,7 @@ create_exception_with_info!(
     "七牛 Isahc 异常"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuTrustDNSError,
     "QiniuTrustDNSError",
     PyRuntimeError,
@@ -250,7 +250,7 @@ create_exception_with_info!(
     "七牛 Isahc 异常"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidURLError,
     "QiniuInvalidURLError",
     PyValueError,
@@ -259,7 +259,7 @@ create_exception_with_info!(
     "七牛非法 URL 错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidStatusCodeError,
     "QiniuInvalidStatusCodeError",
     PyValueError,
@@ -268,7 +268,7 @@ create_exception_with_info!(
     "七牛非法 HTTP 状态码错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidMethodError,
     "QiniuInvalidMethodError",
     PyValueError,
@@ -277,7 +277,7 @@ create_exception_with_info!(
     "七牛非法 HTTP 方法错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidHeaderNameError,
     "QiniuInvalidHeaderNameError",
     PyValueError,
@@ -286,7 +286,7 @@ create_exception_with_info!(
     "七牛非法 HTTP 头名称错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidHeaderValueError,
     "QiniuInvalidHeaderValueError",
     PyValueError,
@@ -295,7 +295,7 @@ create_exception_with_info!(
     "七牛非法 HTTP 头值错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuHeaderValueEncodingError,
     "QiniuHeaderValueEncodingError",
     PyValueError,
@@ -304,7 +304,7 @@ create_exception_with_info!(
     "七牛 HTTP 头编码错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidIpAddrError,
     "QiniuInvalidIpAddrError",
     PyValueError,
@@ -313,7 +313,7 @@ create_exception_with_info!(
     "七牛非法 IP 地址错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidDomainWithPortError,
     "QiniuInvalidDomainWithPortError",
     PyValueError,
@@ -322,7 +322,7 @@ create_exception_with_info!(
     "七牛非法域名错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidIpAddrWithPortError,
     "QiniuInvalidIpAddrWithPortError",
     PyValueError,
@@ -331,7 +331,7 @@ create_exception_with_info!(
     "七牛非法 IP 地址错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidEndpointError,
     "QiniuInvalidEndpointError",
     PyValueError,
@@ -340,7 +340,7 @@ create_exception_with_info!(
     "七牛非法终端地址错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuJsonError,
     "QiniuJsonError",
     PyValueError,
@@ -349,7 +349,7 @@ create_exception_with_info!(
     "七牛 JSON 错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuTimeError,
     "QiniuTimeError",
     PyValueError,
@@ -358,7 +358,7 @@ create_exception_with_info!(
     "七牛时间错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuBase64Error,
     "QiniuBase64Error",
     PyValueError,
@@ -367,7 +367,7 @@ create_exception_with_info!(
     "七牛 Base64 解析错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuMimeParseError,
     "QiniuMimeParseError",
     PyValueError,
@@ -376,7 +376,7 @@ create_exception_with_info!(
     "七牛 MIME 解析错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuUploadTokenFormatError,
     "QiniuUploadTokenFormatError",
     PyValueError,
@@ -385,7 +385,7 @@ create_exception_with_info!(
     "七牛上传凭证格式错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuIoError,
     "QiniuIoError",
     PyIOError,
@@ -394,7 +394,7 @@ create_exception_with_info!(
     "七牛本地 IO 错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuHttpCallError,
     "QiniuHttpCallError",
     PyIOError,
@@ -403,7 +403,7 @@ create_exception_with_info!(
     "七牛 HTTP 调用错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuApiCallError,
     "QiniuApiCallError",
     PyIOError,
@@ -412,7 +412,7 @@ create_exception_with_info!(
     "七牛 API 调用错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuDownloadError,
     "QiniuDownloadError",
     PyIOError,
@@ -421,7 +421,7 @@ create_exception_with_info!(
     "七牛下载错误"
 );
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuAuthorizationError,
     "QiniuAuthorizationError",
     PyIOError,
@@ -431,7 +431,7 @@ create_exception_with_info!(
 );
 
 create_exception_with_info!(
-    qiniu_sdk,
+    qiniu_bindings,
     QiniuInvalidPrefixLengthError,
     "QiniuInvalidPrefixLengthError",
     PyValueError,

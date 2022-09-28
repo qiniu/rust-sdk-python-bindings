@@ -1,4 +1,4 @@
-from qiniu_sdk import etag
+from qiniu_bindings import etag
 import unittest
 import aiofiles
 import asyncio

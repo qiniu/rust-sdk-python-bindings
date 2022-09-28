@@ -3,7 +3,7 @@ requires = ["maturin>=0.13,<0.14"]
 build-backend = "maturin"
 
 [project]
-name = "qiniu-sdk"
+name = "qiniu-bindings"
 version = '0.1.0'
 description = "Qiniu Rust SDK Bindings to Python"
 authors = [

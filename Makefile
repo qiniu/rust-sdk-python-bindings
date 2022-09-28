@@ -3,11 +3,11 @@
 all: build
 build:
 ifeq ($(OS),Windows_NT)
-	powershell "(.\.env\Scripts\Activate.ps1); (.\.env\Scripts\python.exe -m pip uninstall -y qiniu-sdk); (maturin.exe develop)"
+	powershell "(.\.env\Scripts\Activate.ps1); (.\.env\Scripts\python.exe -m pip uninstall -y qiniu-bindings); (maturin.exe develop)"
 else
 	set -e; \
 	. .env/bin/activate; \
-	.env/bin/python -m pip uninstall -y qiniu-sdk || true; \
+	.env/bin/python -m pip uninstall -y qiniu-bindings || true; \
 	maturin develop
 endif
 apis:
