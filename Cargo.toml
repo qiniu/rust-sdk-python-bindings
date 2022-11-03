@@ -3,7 +3,7 @@ name = "qiniu-bindings"
 version = "0.1.0"
 authors = ["Rong Zhou <zhourong@qiniu.com>", "Shanghai Qiniu Information Technologies Co., Ltd."]
 edition = "2021"
-rust-version = "1.60.0"
+rust-version = "1.62.0"
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/bachue/rust-sdk-python-bindings.git"
@@ -26,8 +26,8 @@ num-integer = "0.1.45"
 maybe-owned = "0.3.4"
 smart-default = "0.6.0"
 serde_json = "1.0.79"
-pyo3 = { version = "0.16.6", features = ["abi3-py38", "extension-module", "multiple-pymethods"] }
-pyo3-asyncio = { version = "0.16.0", features = ["async-std-runtime"] }
+pyo3 = { version = "0.17.3", features = ["abi3-py38", "extension-module", "multiple-pymethods"] }
+pyo3-asyncio = { version = "0.17.0", features = ["async-std-runtime"] }
 qiniu-sdk = { version = "0.2.0", default-features = false, features = ["utils", "etag", "credential", "upload-token", "http", "http-client", "objects", "upload", "download", "isahc", "trust_dns", "async"] }
 async-std = "1.6.3"
 anyhow = "1.0.57"

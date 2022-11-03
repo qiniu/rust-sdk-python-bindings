@@ -14,7 +14,7 @@ Qiniu SDK for Python 包含以下特性：
 
 ## 安装步骤
 
-1. 确认 Rust 已经被安装，且版本号大于 `1.60.0`（可以用 `rustc --version` 查看）
+1. 确认 Rust 已经被安装，且版本号大于 `1.62.0`（可以用 `rustc --version` 查看）
 2. 确认 Python 已经被安装，且版本号大于 `3.8.0`（可以用 `python3 --version` 查看）
 3. 仅对于中国大陆用户，可以参考清华大学开源软件镜像站的 [Rust crates.io 索引镜像使用帮助](https://mirrors.tuna.tsinghua.edu.cn/help/crates.io-index.git/) 和 [PyPI 镜像使用帮助](https://mirrors.tuna.tsinghua.edu.cn/help/pypi/) 加速相关依赖的下载速度
 4. 执行 `pip3 install qiniu-bindings`
@@ -489,7 +489,7 @@ for result in bucket.batch_ops([
 
 ## 最低支持的 Rust 版本（MSRV）
 
-- 1.60.0
+- 1.62.0
 
 ## 编码规范
 

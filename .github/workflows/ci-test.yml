@@ -9,11 +9,12 @@ jobs:
           - ubuntu-latest
           - macos-latest
         rust:
-          - 1.60.0
+          - 1.62.0
         python:
           - '3.8'
           - '3.9'
           - '3.10'
+          - '3.11'
           - 'pypy-3.8'
           - 'pypy-3.9'
     runs-on: ${{ matrix.os }}
@@ -46,9 +47,9 @@ jobs:
         os:
           - windows-latest
         rust:
-          - 1.60.0
+          - 1.62.0
         python:
-          - '3.10'
+          - '3.11'
           - 'pypy-3.9'
     runs-on: ${{ matrix.os }}
     steps:
