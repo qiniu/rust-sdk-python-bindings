@@ -1,8 +1,8 @@
 # Qiniu Resource Storage Binding SDK for Python
 
-[![Run Test Cases](https://github.com/bachue/rust-sdk-python-bindings/actions/workflows/ci-test.yml/badge.svg)](https://github.com/bachue/rust-sdk-python-bindings/actions/workflows/ci-test.yml)
-[![GitHub release](https://img.shields.io/github/v/tag/bachue/rust-sdk-python-bindings.svg?label=release)](https://github.com/bachue/rust-sdk-python-bindings/releases)
-[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/bachue/rust-sdk-python-bindings/blob/master/LICENSE)
+[![Run Test Cases](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml/badge.svg)](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml)
+[![GitHub release](https://img.shields.io/github/v/tag/qiniu/rust-sdk-python-bindings.svg?label=release)](https://github.com/qiniu/rust-sdk-python-bindings/releases)
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/qiniu/rust-sdk-python-bindings/blob/master/LICENSE)
 
 ## 概要
 
