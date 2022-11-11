@@ -2,6 +2,7 @@
 
 [![Run Test Cases](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml/badge.svg)](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml)
 [![GitHub release](https://img.shields.io/github/v/tag/qiniu/rust-sdk-python-bindings.svg?label=release)](https://github.com/qiniu/rust-sdk-python-bindings/releases)
+[![Docs](https://img.shields.io/badge/docs-0.1.0-yellow)](https://qiniu.github.io/rust-sdk-python-bindings/)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/qiniu/rust-sdk-python-bindings/blob/master/LICENSE)
 
 ## 概要
