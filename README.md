@@ -2,7 +2,7 @@
 
 [![Run Test Cases](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml/badge.svg)](https://github.com/qiniu/rust-sdk-python-bindings/actions/workflows/ci-test.yml)
 [![GitHub release](https://img.shields.io/github/v/tag/qiniu/rust-sdk-python-bindings.svg?label=release)](https://github.com/qiniu/rust-sdk-python-bindings/releases)
-[![Docs](https://img.shields.io/badge/docs-0.1.0-yellow)](https://qiniu.github.io/rust-sdk-python-bindings/)
+[![Docs](https://img.shields.io/github/v/tag/qiniu/rust-sdk-python-bindings.svg?label=docs&color=yellow)](https://qiniu.github.io/rust-sdk-python-bindings/)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/qiniu/rust-sdk-python-bindings/blob/master/LICENSE)
 
 ## 概要
@@ -57,6 +57,7 @@ cred = credential.Credential(access_key, secret_key)
 upload_token = upload_token.UploadPolicy.new_for_object(
     bucket_name, object_name, 3600).build().to_upload_token_provider(cred)
 print(upload_token)
+```
 
 #### 自定义上传回复的凭证
 
@@ -149,7 +150,7 @@ uploader.upload_path('/home/qiniu/test.png', object_name=object_name, file_name=
 
 #### 字节数组上传 / 数据流上传
 
-可以支持将内存中的字节数组或实现了 `read` 方法的实例上传到空间中。
+可以支持将实现了 `read()` 方法的实例上传到空间中。
 
 ```python
 from qiniu_bindings import upload, credential
@@ -312,6 +313,7 @@ cred = credential.Credential(access_key, secret_key)
 bucket = objects.ObjectsManager(cred).bucket(bucket_name)
 bucket.delete_object(object_name).call()
 ```
+
 #### 设置或更新文件的生存时间
 
 可以给已经存在于空间中的文件设置文件生存时间，或者更新已设置了生存时间但尚未被删除的文件的新的生存时间。
